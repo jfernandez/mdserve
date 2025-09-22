@@ -12,19 +12,34 @@ Just run `mdserve file.md` and start writing. One statically-compiled executable
 - 🚀 **Fast** - Built with Rust and Axum for excellent performance and low memory usage
 
 ## Installation
-### From Source
+
+### Quick Install (Recommended)
 
 ```bash
-git clone <repository-url>
-cd mdserve
-cargo install --path .
+curl -sSfL https://raw.githubusercontent.com/jfernandez/mdserve/main/install.sh | bash
 ```
 
-### Using Cargo
+This will automatically detect your platform and install the latest binary to your system.
+
+### Alternative Methods
+
+#### Using Cargo
 
 ```bash
 cargo install mdserve
 ```
+
+#### From Source
+
+```bash
+git clone https://github.com/jfernandez/mdserve.git
+cd mdserve
+cargo install --path .
+```
+
+#### Manual Download
+
+Download the appropriate binary for your platform from the [latest release](https://github.com/jfernandez/mdserve/releases/latest).
 
 ## Usage
 
