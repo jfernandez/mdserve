@@ -13,7 +13,17 @@ Just run `mdserve file.md` and start writing. One statically-compiled executable
 
 ## Installation
 
-### Quick Install (Recommended)
+### macOS (Homebrew)
+
+```bash
+# Add the tap
+brew tap jfernandez/mdserve
+
+# Install mdserve
+brew install mdserve
+```
+
+### Linux (Quick Install)
 
 ```bash
 curl -sSfL https://raw.githubusercontent.com/jfernandez/mdserve/main/install.sh | bash
