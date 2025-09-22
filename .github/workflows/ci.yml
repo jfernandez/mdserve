@@ -1,0 +1,94 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test-and-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+          - target: aarch64-apple-darwin
+            os: macos-latest
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v5
+
+    - name: Report Rust version
+      run: rustup show
+
+    - name: Install target
+      run: rustup target add ${{ matrix.target }}
+
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Check formatting
+      run: cargo fmt --check
+
+    - name: Run clippy
+      run: cargo clippy --all-targets --all-features --target ${{ matrix.target }} -- -D warnings
+
+    - name: Run tests
+      run: cargo test --target ${{ matrix.target }}
+
+    - name: Build release
+      run: cargo build --release --target ${{ matrix.target }}
+
+    - name: Prepare artifact
+      run: |
+        mkdir -p dist
+        cp target/${{ matrix.target }}/release/mdserve dist/mdserve-${{ matrix.target }}
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: mdserve-${{ matrix.target }}
+        path: dist/mdserve-${{ matrix.target }}
+
+  release:
+    needs: test-and-build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        pattern: mdserve-*
+        path: artifacts
+        merge-multiple: true
+
+    - name: Create Release and Upload Artifacts
+      uses: ncipollo/release-action@v1
+      with:
+        artifacts: artifacts/mdserve-*
+        draft: true
+        allowUpdates: true
+        updateOnlyUnreleased: true
+        token: ${{ secrets.GITHUB_TOKEN }}
