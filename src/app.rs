@@ -2,10 +2,10 @@ use anyhow::Result;
 use axum::{
     Router,
     extract::{
-        State, WebSocketUpgrade,
+        Path as AxumPath, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
-    http::StatusCode,
+    http::{StatusCode, header},
     response::{Html, IntoResponse},
     routing::get,
 };
@@ -44,6 +44,7 @@ pub enum ServerMessage {
 
 struct MarkdownState {
     file_path: PathBuf,
+    base_dir: PathBuf,
     last_modified: SystemTime,
     cached_html: String,
     change_tx: broadcast::Sender<String>,
@@ -57,8 +58,21 @@ impl MarkdownState {
         let cached_html = Self::markdown_to_html(&content);
         let (change_tx, _) = broadcast::channel::<String>(16);
 
+        let base_dir = file_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf()
+            .canonicalize()
+            .unwrap_or_else(|_| {
+                file_path
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .to_path_buf()
+            });
+
         Ok(MarkdownState {
             file_path,
+            base_dir,
             last_modified,
             cached_html,
             change_tx,
@@ -151,6 +165,7 @@ pub fn new_router(file_path: PathBuf) -> Result<Router> {
         .route("/", get(serve_html))
         .route("/raw", get(serve_raw))
         .route("/ws", get(websocket_handler))
+        .route("/*path", get(serve_static_file))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
@@ -204,6 +219,96 @@ async fn serve_raw(State(state): State<SharedMarkdownState>) -> impl IntoRespons
             format!("Error reading file: {e}"),
         ),
     }
+}
+
+async fn serve_static_file(
+    AxumPath(file_path): AxumPath<String>,
+    State(state): State<SharedMarkdownState>,
+) -> impl IntoResponse {
+    let state = state.lock().await;
+
+    // Only serve image files
+    if !is_image_file(&file_path) {
+        return (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "text/plain")],
+            "File not found".to_string(),
+        )
+            .into_response();
+    }
+
+    // Construct the full path by joining base_dir with the requested path
+    let full_path = state.base_dir.join(&file_path);
+
+    // Security check: ensure the resolved path is still within base_dir
+    match full_path.canonicalize() {
+        Ok(canonical_path) => {
+            if !canonical_path.starts_with(&state.base_dir) {
+                return (
+                    StatusCode::FORBIDDEN,
+                    [(header::CONTENT_TYPE, "text/plain")],
+                    "Access denied".to_string(),
+                )
+                    .into_response();
+            }
+
+            // Try to read and serve the file
+            match fs::read(&canonical_path) {
+                Ok(contents) => {
+                    let content_type = guess_image_content_type(&file_path);
+                    (
+                        StatusCode::OK,
+                        [(header::CONTENT_TYPE, content_type.as_str())],
+                        contents,
+                    )
+                        .into_response()
+                }
+                Err(_) => (
+                    StatusCode::NOT_FOUND,
+                    [(header::CONTENT_TYPE, "text/plain")],
+                    "File not found".to_string(),
+                )
+                    .into_response(),
+            }
+        }
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "text/plain")],
+            "File not found".to_string(),
+        )
+            .into_response(),
+    }
+}
+
+fn is_image_file(file_path: &str) -> bool {
+    let extension = std::path::Path::new(file_path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("");
+
+    matches!(
+        extension.to_lowercase().as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "bmp" | "ico"
+    )
+}
+
+fn guess_image_content_type(file_path: &str) -> String {
+    let extension = std::path::Path::new(file_path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("");
+
+    match extension.to_lowercase().as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        _ => "application/octet-stream",
+    }
+    .to_string()
 }
 
 async fn websocket_handler(

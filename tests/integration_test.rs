@@ -188,3 +188,69 @@ async fn test_404_for_unknown_routes() {
 
     assert_eq!(response.status_code(), 404);
 }
+
+#[tokio::test]
+async fn test_image_serving() {
+    use tempfile::tempdir;
+
+    // Create a temporary directory
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+
+    // Create a markdown file with image reference
+    let md_content =
+        "# Test with Image\n\n![Test Image](test.png)\n\nThis markdown references an image.";
+    let md_path = temp_dir.path().join("test.md");
+    fs::write(&md_path, md_content).expect("Failed to write markdown file");
+
+    // Create a fake PNG image (1x1 pixel PNG)
+    let png_data = vec![
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90,
+        0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08, 0xD7, 0x63, 0xF8,
+        0x0F, 0x00, 0x00, 0x01, 0x00, 0x01, 0x5C, 0xDD, 0x8D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+    let img_path = temp_dir.path().join("test.png");
+    fs::write(&img_path, png_data).expect("Failed to write image file");
+
+    // Create router with the markdown file
+    let router = new_router(md_path).expect("Failed to create router");
+    let server = TestServer::new(router).expect("Failed to create test server");
+
+    // Test that markdown includes img tag
+    let response = server.get("/").await;
+    assert_eq!(response.status_code(), 200);
+    let body = response.text();
+    assert!(body.contains("<img src=\"test.png\" alt=\"Test Image\""));
+
+    // Test that image is served correctly
+    let img_response = server.get("/test.png").await;
+    assert_eq!(img_response.status_code(), 200);
+    assert_eq!(img_response.header("content-type"), "image/png");
+    assert!(!img_response.as_bytes().is_empty());
+}
+
+#[tokio::test]
+async fn test_non_image_files_not_served() {
+    use tempfile::tempdir;
+
+    // Create a temporary directory
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+
+    // Create a markdown file
+    let md_content = "# Test";
+    let md_path = temp_dir.path().join("test.md");
+    fs::write(&md_path, md_content).expect("Failed to write markdown file");
+
+    // Create a non-image file (txt)
+    let txt_path = temp_dir.path().join("secret.txt");
+    fs::write(&txt_path, "secret content").expect("Failed to write txt file");
+
+    // Create router with the markdown file
+    let router = new_router(md_path).expect("Failed to create router");
+    let server = TestServer::new(router).expect("Failed to create test server");
+
+    // Test that non-image files return 404
+    let response = server.get("/secret.txt").await;
+    assert_eq!(response.status_code(), 404);
+}

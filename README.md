@@ -4,6 +4,8 @@ Fast markdown preview server with **live reload** and **theme support**.
 
 Just run `mdserve file.md` and start writing. One statically-compiled executable that runs anywhere - no installation, no dependencies.
 
+![Terminal output when starting mdserve](mdserve-terminal-output.png)
+
 ## Features
 
 - ⚡ **Instant Live Reload** - Real-time updates via WebSocket when markdown file changes
@@ -23,7 +25,7 @@ brew tap jfernandez/mdserve
 brew install mdserve
 ```
 
-### Linux (Quick Install)
+### Linux
 
 ```bash
 curl -sSfL https://raw.githubusercontent.com/jfernandez/mdserve/main/install.sh | bash
@@ -84,6 +86,8 @@ Once running, the server provides (default: [http://localhost:3000](http://local
   - **Catppuccin Macchiato**: Cozy mid-tone theme with rich colors
   - **Catppuccin Mocha**: Deep dark theme with vibrant accents
 - **Persistent Preference**: Your theme choice is automatically saved in browser localStorage
+
+![Theme picker interface](mdserve-theme-picker.png)
 
 
 ## Development
