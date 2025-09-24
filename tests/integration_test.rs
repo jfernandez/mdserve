@@ -254,3 +254,37 @@ async fn test_non_image_files_not_served() {
     let response = server.get("/secret.txt").await;
     assert_eq!(response.status_code(), 404);
 }
+
+#[tokio::test]
+async fn test_html_tags_in_markdown_are_rendered() {
+    let markdown_content = r#"# HTML Test
+
+This markdown contains HTML tags:
+
+<div class="highlight">
+    <p>This should be rendered as HTML, not escaped</p>
+    <span style="color: red;">Red text</span>
+</div>
+
+Regular **markdown** still works.
+"#;
+
+    let (server, _temp_file) = create_test_server(markdown_content).await;
+
+    let response = server.get("/").await;
+
+    assert_eq!(response.status_code(), 200);
+    let body = response.text();
+
+    // HTML tags should be rendered, not escaped
+    assert!(body.contains(r#"<div class="highlight">"#));
+    assert!(body.contains(r#"<span style="color: red;">"#));
+    assert!(body.contains("<p>This should be rendered as HTML, not escaped</p>"));
+
+    // Should not contain escaped HTML
+    assert!(!body.contains("&lt;div"));
+    assert!(!body.contains("&gt;"));
+
+    // Regular markdown should still work
+    assert!(body.contains("<strong>markdown</strong>"));
+}

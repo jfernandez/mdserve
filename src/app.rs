@@ -85,9 +85,7 @@ impl MarkdownState {
 
         if current_modified > self.last_modified {
             let content = fs::read_to_string(&self.file_path)?;
-            let html_body = markdown::to_html_with_options(&content, &markdown::Options::gfm())
-                .unwrap_or_else(|_| "Error parsing markdown".to_string());
-            self.cached_html = TEMPLATE.replace("{CONTENT}", &html_body);
+            self.cached_html = Self::markdown_to_html(&content);
             self.last_modified = current_modified;
 
             // Send the complete rendered HTML to all WebSocket clients
@@ -100,7 +98,11 @@ impl MarkdownState {
     }
 
     fn markdown_to_html(content: &str) -> String {
-        let html_body = markdown::to_html_with_options(content, &markdown::Options::gfm())
+        // Create GFM options with HTML rendering enabled
+        let mut options = markdown::Options::gfm();
+        options.compile.allow_dangerous_html = true;
+
+        let html_body = markdown::to_html_with_options(content, &options)
             .unwrap_or_else(|_| "Error parsing markdown".to_string());
 
         TEMPLATE.replace("{CONTENT}", &html_body)
