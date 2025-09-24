@@ -87,7 +87,13 @@ Once running, the server provides (default: [http://localhost:3000](http://local
   - **Catppuccin Mocha**: Deep dark theme with vibrant accents
 - **Persistent Preference**: Your theme choice is automatically saved in browser localStorage
 
+*Click the theme button (🎨) to access the built-in theme selector*
+
 ![Theme picker interface](mdserve-theme-picker.png)
+
+*mdserve running with the Catppuccin Macchiato theme - notice the warm, cozy colors and excellent readability*
+
+![mdserve with Catppuccin Macchiato theme](mdserve-catppuccin-macchiato.png)
 
 
 ## Development
