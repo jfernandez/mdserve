@@ -4,7 +4,31 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Markdown Preview</title>
+
+    <!-- Critical: Apply theme before first paint to prevent flash -->
+    <script>
+        (function() {
+            // Get saved theme or use default
+            const theme = localStorage.getItem('theme') || 'catppuccin-mocha';
+
+            // Apply immediately to <html>
+            document.documentElement.setAttribute('data-theme', theme);
+
+            // Mark theme as initialized
+            document.documentElement.classList.add('theme-initialized');
+        })();
+    </script>
+
     <style>
+        /* Prevent flash by hiding content until theme is applied */
+        html:not(.theme-initialized) body {
+            opacity: 0;
+        }
+
+        html.theme-initialized body {
+            opacity: 1;
+            transition: opacity 0.1s ease-in;
+        }
         :root {
             --bg-color: #fff;
             --text-color: #333;
