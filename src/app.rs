@@ -105,7 +105,18 @@ impl MarkdownState {
         let html_body = markdown::to_html_with_options(content, &options)
             .unwrap_or_else(|_| "Error parsing markdown".to_string());
 
-        TEMPLATE.replace("{CONTENT}", &html_body)
+        // Check if the HTML contains mermaid code blocks
+        let has_mermaid = html_body.contains(r#"class="language-mermaid""#);
+
+        let mermaid_assets = if has_mermaid {
+            r#"<script src="https://cdn.jsdelivr.net/npm/mermaid@11.12.0/dist/mermaid.min.js"></script>"#
+        } else {
+            ""
+        };
+
+        TEMPLATE
+            .replace("{CONTENT}", &html_body)
+            .replace("<!-- {MERMAID_ASSETS} -->", mermaid_assets)
     }
 }
 

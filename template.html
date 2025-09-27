@@ -278,14 +278,18 @@
         a:hover { text-decoration: underline; }
         img { max-width: 100%; height: auto; }
     </style>
+
+    <!-- {MERMAID_ASSETS} -->
+
     <script>
         let lastModified = Date.now();
 
         // Theme management
         function initTheme() {
-            const savedTheme = localStorage.getItem('theme') || 'catppuccin-mocha';
-            document.documentElement.setAttribute('data-theme', savedTheme);
-            updateThemeSelection(savedTheme);
+            // Theme is already set by the early script to prevent flash
+            // Just update the theme selection UI to match current theme
+            const currentTheme = document.documentElement.getAttribute('data-theme');
+            updateThemeSelection(currentTheme);
         }
 
         function openThemeModal() {
@@ -303,6 +307,7 @@
             document.documentElement.setAttribute('data-theme', theme);
             localStorage.setItem('theme', theme);
             updateThemeSelection(theme);
+            updateMermaidTheme();
             closeThemeModal();
         }
 
@@ -316,6 +321,96 @@
                     card.classList.remove('selected');
                 }
             });
+        }
+
+        // Mermaid theme management
+        function getMermaidTheme() {
+            const currentTheme = document.documentElement.getAttribute('data-theme');
+            switch (currentTheme) {
+                case 'dark':
+                case 'catppuccin-macchiato':
+                case 'catppuccin-mocha':
+                    return 'dark';
+                case 'light':
+                case 'catppuccin-latte':
+                default:
+                    return 'default';
+            }
+        }
+
+        function initMermaid() {
+            if (typeof mermaid !== 'undefined') {
+                mermaid.initialize({
+                    startOnLoad: false,
+                    theme: getMermaidTheme(),
+                    themeVariables: {
+                        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif'
+                    },
+                    flowchart: {
+                        useMaxWidth: true,
+                        htmlLabels: true
+                    },
+                    sequence: {
+                        useMaxWidth: true
+                    },
+                    gantt: {
+                        useMaxWidth: true
+                    }
+                });
+
+                // Find and transform mermaid code blocks
+                transformMermaidCodeBlocks();
+
+                // Render all mermaid diagrams
+                mermaid.run();
+            }
+        }
+
+        function transformMermaidCodeBlocks() {
+            // Find all code blocks with language-mermaid class
+            const mermaidCodeBlocks = document.querySelectorAll('code.language-mermaid');
+
+            mermaidCodeBlocks.forEach((codeElement, index) => {
+                const preElement = codeElement.parentElement;
+                if (preElement && preElement.tagName === 'PRE') {
+                    // Get the mermaid code content
+                    const mermaidCode = codeElement.textContent;
+
+                    // Create new mermaid div
+                    const mermaidDiv = document.createElement('div');
+                    mermaidDiv.className = 'mermaid';
+                    mermaidDiv.id = `mermaid-${index}`;
+                    mermaidDiv.textContent = mermaidCode;
+                    mermaidDiv.setAttribute('data-original', mermaidCode);
+
+                    // Replace the pre/code block with the mermaid div
+                    preElement.parentElement.replaceChild(mermaidDiv, preElement);
+                }
+            });
+        }
+
+        function updateMermaidTheme() {
+            if (typeof mermaid !== 'undefined') {
+                mermaid.initialize({
+                    startOnLoad: false,
+                    theme: getMermaidTheme(),
+                    themeVariables: {
+                        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif'
+                    }
+                });
+
+                // Re-render all mermaid diagrams with new theme
+                const mermaidElements = document.querySelectorAll('.mermaid');
+                mermaidElements.forEach((element) => {
+                    element.removeAttribute('data-processed');
+                    const originalContent = element.getAttribute('data-original');
+                    if (originalContent) {
+                        element.textContent = originalContent;
+                    }
+                });
+
+                mermaid.run();
+            }
         }
 
         // Auto-refresh functionality using WebSocket
@@ -354,6 +449,7 @@
         // Initialize theme and live reload on page load
         document.addEventListener('DOMContentLoaded', function() {
             initTheme();
+            initMermaid();
             setupLiveReload();
 
             // Modal close functionality
