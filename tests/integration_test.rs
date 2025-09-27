@@ -263,3 +263,141 @@ Regular **markdown** still works.
     // Regular markdown should still work
     assert!(body.contains("<strong>markdown</strong>"));
 }
+
+#[tokio::test]
+async fn test_mermaid_diagram_detection_and_script_injection() {
+    let markdown_content = r#"# Mermaid Test
+
+Regular content here.
+
+```mermaid
+graph TD
+    A[Start] --> B{Decision}
+    B -->|Yes| C[End]
+    B -->|No| D[Continue]
+```
+
+More regular content.
+
+```javascript
+// This is a regular code block, not mermaid
+console.log("Hello World");
+```
+"#;
+
+    let (server, _temp_file) = create_test_server(markdown_content).await;
+
+    let response = server.get("/").await;
+
+    assert_eq!(response.status_code(), 200);
+    let body = response.text();
+
+    // Should contain the mermaid code block with language-mermaid class
+    assert!(body.contains(r#"class="language-mermaid""#));
+    assert!(body.contains("graph TD"));
+
+    // Check for HTML-encoded or raw content (content might be HTML-encoded)
+    let has_raw_content = body.contains("A[Start] --> B{Decision}");
+    let has_encoded_content = body.contains("A[Start] --&gt; B{Decision}");
+    assert!(
+        has_raw_content || has_encoded_content,
+        "Expected mermaid content not found in body"
+    );
+
+    // Should inject the Mermaid CDN script when mermaid blocks are detected
+    assert!(body.contains(r#"<script src="https://cdn.jsdelivr.net/npm/mermaid@11.12.0/dist/mermaid.min.js"></script>"#));
+
+    // Should contain the Mermaid initialization functions
+    assert!(body.contains("function initMermaid()"));
+    assert!(body.contains("function transformMermaidCodeBlocks()"));
+    assert!(body.contains("function getMermaidTheme()"));
+
+    // Should contain regular JavaScript code block without mermaid treatment
+    assert!(body.contains(r#"class="language-javascript""#));
+    assert!(body.contains("console.log"));
+}
+
+#[tokio::test]
+async fn test_no_mermaid_script_injection_without_mermaid_blocks() {
+    let markdown_content = r#"# No Mermaid Test
+
+This content has no mermaid diagrams.
+
+```javascript
+console.log("Hello World");
+```
+
+```bash
+echo "Regular code block"
+```
+
+Just regular markdown content.
+"#;
+
+    let (server, _temp_file) = create_test_server(markdown_content).await;
+
+    let response = server.get("/").await;
+
+    assert_eq!(response.status_code(), 200);
+    let body = response.text();
+
+    // Should NOT inject the Mermaid CDN script when no mermaid blocks are present
+    assert!(!body.contains(r#"<script src="https://cdn.jsdelivr.net/npm/mermaid@11.12.0/dist/mermaid.min.js"></script>"#));
+
+    // Should still contain the Mermaid initialization functions (they're always present)
+    assert!(body.contains("function initMermaid()"));
+
+    // Should contain regular code blocks
+    assert!(body.contains(r#"class="language-javascript""#));
+    assert!(body.contains(r#"class="language-bash""#));
+}
+
+#[tokio::test]
+async fn test_multiple_mermaid_diagrams() {
+    let markdown_content = r#"# Multiple Mermaid Diagrams
+
+## Flowchart
+```mermaid
+graph LR
+    A --> B
+```
+
+## Sequence Diagram
+```mermaid
+sequenceDiagram
+    Alice->>Bob: Hello
+    Bob-->>Alice: Hi
+```
+
+## Class Diagram
+```mermaid
+classDiagram
+    Animal <|-- Duck
+```
+"#;
+
+    let (server, _temp_file) = create_test_server(markdown_content).await;
+
+    let response = server.get("/").await;
+
+    assert_eq!(response.status_code(), 200);
+    let body = response.text();
+
+    // Should detect all three mermaid blocks
+    let mermaid_occurrences = body.matches(r#"class="language-mermaid""#).count();
+    assert_eq!(mermaid_occurrences, 3);
+
+    // Should contain content from all diagrams
+    assert!(body.contains("graph LR"));
+    assert!(body.contains("sequenceDiagram"));
+    assert!(body.contains("classDiagram"));
+
+    // Check for HTML-encoded or raw content
+    assert!(body.contains("A --&gt; B") || body.contains("A --> B"));
+    assert!(body.contains("Alice-&gt;&gt;Bob") || body.contains("Alice->>Bob"));
+    assert!(body.contains("Animal &lt;|-- Duck") || body.contains("Animal <|-- Duck"));
+
+    // Should inject the Mermaid script only once
+    let script_occurrences = body.matches(r#"<script src="https://cdn.jsdelivr.net/npm/mermaid@11.12.0/dist/mermaid.min.js"></script>"#).count();
+    assert_eq!(script_occurrences, 1);
+}
