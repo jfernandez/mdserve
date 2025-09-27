@@ -82,34 +82,10 @@ async fn test_websocket_connection() {
 }
 
 #[tokio::test]
-async fn test_websocket_receives_initial_content() {
-    let (server, _temp_file) = create_test_server_with_http("# Initial Content").await;
-
-    let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
-
-    // Should receive initial content update
-    let message: ServerMessage = websocket.receive_json().await;
-
-    if let ServerMessage::ContentUpdate { html } = message {
-        assert!(html.contains("Initial Content"));
-    } else {
-        panic!("Expected ContentUpdate message");
-    }
-}
-
-#[tokio::test]
 async fn test_file_modification_updates_via_websocket() {
     let (server, temp_file) = create_test_server_with_http("# Original Content").await;
 
     let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
-
-    // Receive initial content
-    let initial_message: ServerMessage = websocket.receive_json().await;
-    if let ServerMessage::ContentUpdate { html } = initial_message {
-        assert!(html.contains("Original Content"));
-    } else {
-        panic!("Expected initial ContentUpdate message");
-    }
 
     // Modify the file
     fs::write(&temp_file, "# Modified Content").expect("Failed to modify file");
@@ -117,7 +93,7 @@ async fn test_file_modification_updates_via_websocket() {
     // Add a small delay to allow file watcher to detect change
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-    // Should receive update via WebSocket (with timeout)
+    // Should receive reload signal via WebSocket (with timeout)
     let update_result = tokio::time::timeout(
         tokio::time::Duration::from_secs(5),
         websocket.receive_json::<ServerMessage>(),
@@ -126,11 +102,10 @@ async fn test_file_modification_updates_via_websocket() {
 
     match update_result {
         Ok(update_message) => {
-            if let ServerMessage::ContentUpdate { html } = update_message {
-                assert!(html.contains("Modified Content"));
-                assert!(!html.contains("Original Content"));
+            if let ServerMessage::Reload = update_message {
+                // Success - we received a reload signal
             } else {
-                panic!("Expected ContentUpdate message after file modification");
+                panic!("Expected Reload message after file modification");
             }
         }
         Err(_) => {

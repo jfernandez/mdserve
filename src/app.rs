@@ -38,7 +38,7 @@ pub enum ClientMessage {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "type")]
 pub enum ServerMessage {
-    ContentUpdate { html: String },
+    Reload,
     Pong,
 }
 
@@ -47,7 +47,7 @@ struct MarkdownState {
     base_dir: PathBuf,
     last_modified: SystemTime,
     cached_html: String,
-    change_tx: broadcast::Sender<String>,
+    change_tx: broadcast::Sender<ServerMessage>,
 }
 
 impl MarkdownState {
@@ -56,7 +56,7 @@ impl MarkdownState {
         let last_modified = metadata.modified()?;
         let content = fs::read_to_string(&file_path)?;
         let cached_html = Self::markdown_to_html(&content);
-        let (change_tx, _) = broadcast::channel::<String>(16);
+        let (change_tx, _) = broadcast::channel::<ServerMessage>(16);
 
         let base_dir = file_path
             .parent()
@@ -88,8 +88,8 @@ impl MarkdownState {
             self.cached_html = Self::markdown_to_html(&content);
             self.last_modified = current_modified;
 
-            // Send the complete rendered HTML to all WebSocket clients
-            let _ = self.change_tx.send(self.cached_html.clone());
+            // Send reload signal to all WebSocket clients
+            let _ = self.change_tx.send(ServerMessage::Reload);
 
             Ok(true)
         } else {
@@ -350,22 +350,9 @@ async fn handle_websocket(socket: WebSocket, state: SharedMarkdownState) {
 
     // Spawn task to send messages to client
     let send_task = tokio::spawn(async move {
-        // Send initial content update
-        let initial_html = {
-            let mut state = state.lock().await;
-            let _ = state.refresh_if_needed();
-            state.cached_html.clone()
-        };
-
-        let initial_msg = ServerMessage::ContentUpdate { html: initial_html };
-        if let Ok(json) = serde_json::to_string(&initial_msg) {
-            let _ = sender.send(Message::Text(json)).await;
-        }
-
         // Listen for file changes
-        while let Ok(html_content) = change_rx.recv().await {
-            let msg = ServerMessage::ContentUpdate { html: html_content };
-            if let Ok(json) = serde_json::to_string(&msg)
+        while let Ok(reload_msg) = change_rx.recv().await {
+            if let Ok(json) = serde_json::to_string(&reload_msg)
                 && sender.send(Message::Text(json)).await.is_err()
             {
                 break;

@@ -331,19 +331,9 @@
             socket.onmessage = function(event) {
                 try {
                     const message = JSON.parse(event.data);
-                    if (message.type === 'ContentUpdate') {
-                        // Parse the received HTML to extract just the content
-                        const parser = new DOMParser();
-                        const doc = parser.parseFromString(message.html, 'text/html');
-                        const newContent = doc.getElementById('content');
-
-                        if (newContent) {
-                            const currentContent = document.getElementById('content');
-                            if (currentContent) {
-                                currentContent.innerHTML = newContent.innerHTML;
-                                console.log('Content updated via WebSocket');
-                            }
-                        }
+                    if (message.type === 'Reload') {
+                        console.log('Reloading page via WebSocket');
+                        window.location.reload();
                     }
                 } catch (error) {
                     console.error('Error parsing WebSocket message:', error);
