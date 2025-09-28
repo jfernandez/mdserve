@@ -96,13 +96,11 @@ Once running, the server provides (default: [http://localhost:3000](http://local
 
 ![mdserve with Catppuccin Macchiato theme](mdserve-catppuccin-macchiato.png)
 
-
 ## Development
 
 ### Prerequisites
 
-- Rust 1.70+ (2024 edition)
-- Cargo
+- Rust 1.85+ (2024 edition)
 
 ### Building
 
@@ -119,9 +117,6 @@ cargo test
 # Run integration tests only
 cargo test --test integration_test
 ```
-
-
-
 
 ## License
 
