@@ -38,16 +38,16 @@ This will automatically detect your platform and install the latest binary to yo
 
 #### Using Cargo
 
-```bash
-cargo install mdserve
-```
+⚠️ Name conflict: This project is not the `mdserve` crate on crates.io.
+Do not run cargo install mdserve. I’m coordinating with that crate’s owner on naming.
 
 #### From Source
 
 ```bash
 git clone https://github.com/jfernandez/mdserve.git
 cd mdserve
-cargo install --path .
+cargo build --release
+cp target/release/mdserve <folder in your PATH>
 ```
 
 #### Manual Download
