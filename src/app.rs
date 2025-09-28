@@ -25,6 +25,7 @@ use tokio::{
 use tower_http::cors::CorsLayer;
 
 const TEMPLATE: &str = include_str!("../template.html");
+const MERMAID_JS: &str = include_str!("../mermaid.min.js");
 
 type SharedMarkdownState = Arc<Mutex<MarkdownState>>;
 
@@ -109,7 +110,7 @@ impl MarkdownState {
         let has_mermaid = html_body.contains(r#"class="language-mermaid""#);
 
         let mermaid_assets = if has_mermaid {
-            r#"<script src="https://cdn.jsdelivr.net/npm/mermaid@11.12.0/dist/mermaid.min.js"></script>"#
+            r#"<script src="/mermaid.min.js"></script>"#
         } else {
             ""
         };
@@ -178,6 +179,7 @@ pub fn new_router(file_path: PathBuf) -> Result<Router> {
         .route("/", get(serve_html))
         .route("/raw", get(serve_raw))
         .route("/ws", get(websocket_handler))
+        .route("/mermaid.min.js", get(serve_mermaid_js))
         .route("/*path", get(serve_static_file))
         .layer(CorsLayer::permissive())
         .with_state(state);
@@ -232,6 +234,14 @@ async fn serve_raw(State(state): State<SharedMarkdownState>) -> impl IntoRespons
             format!("Error reading file: {e}"),
         ),
     }
+}
+
+async fn serve_mermaid_js() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/javascript")],
+        MERMAID_JS,
+    )
 }
 
 async fn serve_static_file(

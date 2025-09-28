@@ -304,8 +304,8 @@ console.log("Hello World");
         "Expected mermaid content not found in body"
     );
 
-    // Should inject the Mermaid CDN script when mermaid blocks are detected
-    assert!(body.contains(r#"<script src="https://cdn.jsdelivr.net/npm/mermaid@11.12.0/dist/mermaid.min.js"></script>"#));
+    // Should inject the local Mermaid script when mermaid blocks are detected
+    assert!(body.contains(r#"<script src="/mermaid.min.js"></script>"#));
 
     // Should contain the Mermaid initialization functions
     assert!(body.contains("function initMermaid()"));
@@ -398,6 +398,8 @@ classDiagram
     assert!(body.contains("Animal &lt;|-- Duck") || body.contains("Animal <|-- Duck"));
 
     // Should inject the Mermaid script only once
-    let script_occurrences = body.matches(r#"<script src="https://cdn.jsdelivr.net/npm/mermaid@11.12.0/dist/mermaid.min.js"></script>"#).count();
+    let script_occurrences = body
+        .matches(r#"<script src="/mermaid.min.js"></script>"#)
+        .count();
     assert_eq!(script_occurrences, 1);
 }
