@@ -14,6 +14,7 @@ use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
+    net::Ipv6Addr,
     path::{Path, PathBuf},
     sync::Arc,
     time::SystemTime,
@@ -195,25 +196,40 @@ pub fn new_router(file_path: impl AsRef<Path>) -> Result<Router> {
 ///
 /// Returns an error if:
 /// - The file cannot be read or doesn't exist
-/// - Cannot bind to the specified port
+/// - Cannot bind to the specified host address
 /// - Server fails to start
 /// - Axum serve encounters an error
-pub async fn serve_markdown(file_path: impl AsRef<Path>, port: u16) -> Result<()> {
+pub async fn serve_markdown(
+    file_path: impl AsRef<Path>,
+    hostname: impl AsRef<str>,
+    port: u16,
+) -> Result<()> {
     let file_path = file_path.as_ref();
+    let hostname = hostname.as_ref();
+
     let router = new_router(file_path)?;
 
-    let addr = format!("127.0.0.1:{port}");
-    let listener = TcpListener::bind(&addr).await?;
+    let listener = TcpListener::bind((hostname, port)).await?;
 
+    let listen_addr = format_host(hostname, port);
     println!("📄 Serving markdown file: {}", file_path.display());
-    println!("🌐 Server running at: http://{addr}");
-    println!("📝 Raw markdown at: http://{addr}/raw");
+    println!("🌐 Server running at: http://{listen_addr}");
+    println!("📝 Raw markdown at: http://{listen_addr}/raw");
     println!("⚡ Live reload enabled - file changes will update content instantly");
     println!("\nPress Ctrl+C to stop the server");
 
     axum::serve(listener, router).await?;
 
     Ok(())
+}
+
+/// Format the host address (hostname + port) for printing.
+fn format_host(hostname: &str, port: u16) -> String {
+    if hostname.parse::<Ipv6Addr>().is_ok() {
+        format!("[{hostname}]:{port}")
+    } else {
+        format!("{hostname}:{port}")
+    }
 }
 
 async fn serve_html(State(state): State<SharedMarkdownState>) -> impl IntoResponse {
