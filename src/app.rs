@@ -130,12 +130,14 @@ impl MarkdownState {
 /// - File metadata cannot be accessed
 /// - File watcher cannot be created
 /// - File watcher cannot watch the parent directory
-pub fn new_router(file_path: PathBuf) -> Result<Router> {
-    let state = Arc::new(Mutex::new(MarkdownState::new(file_path.clone())?));
+pub fn new_router<P: AsRef<Path>>(file_path: P) -> Result<Router> {
+    let file_path = file_path.as_ref().to_path_buf();
+
+    let watcher_file_path = file_path.clone();
+    let state = Arc::new(Mutex::new(MarkdownState::new(file_path)?));
 
     // Set up file watcher
     let watcher_state = state.clone();
-    let watcher_file_path = file_path.clone();
     let (tx, mut rx) = mpsc::channel(100);
 
     let mut watcher = RecommendedWatcher::new(
@@ -196,8 +198,9 @@ pub fn new_router(file_path: PathBuf) -> Result<Router> {
 /// - Cannot bind to the specified port
 /// - Server fails to start
 /// - Axum serve encounters an error
-pub async fn serve_markdown(file_path: PathBuf, port: u16) -> Result<()> {
-    let router = new_router(file_path.clone())?;
+pub async fn serve_markdown<P: AsRef<Path>>(file_path: P, port: u16) -> Result<()> {
+    let file_path = file_path.as_ref();
+    let router = new_router(file_path)?;
 
     let addr = format!("127.0.0.1:{port}");
     let listener = TcpListener::bind(&addr).await?;
