@@ -130,7 +130,7 @@ impl MarkdownState {
 /// - File metadata cannot be accessed
 /// - File watcher cannot be created
 /// - File watcher cannot watch the parent directory
-pub fn new_router<P: AsRef<Path>>(file_path: P) -> Result<Router> {
+pub fn new_router(file_path: impl AsRef<Path>) -> Result<Router> {
     let file_path = file_path.as_ref().to_path_buf();
 
     let watcher_file_path = file_path.clone();
@@ -198,7 +198,7 @@ pub fn new_router<P: AsRef<Path>>(file_path: P) -> Result<Router> {
 /// - Cannot bind to the specified port
 /// - Server fails to start
 /// - Axum serve encounters an error
-pub async fn serve_markdown<P: AsRef<Path>>(file_path: P, port: u16) -> Result<()> {
+pub async fn serve_markdown(file_path: impl AsRef<Path>, port: u16) -> Result<()> {
     let file_path = file_path.as_ref();
     let router = new_router(file_path)?;
 
