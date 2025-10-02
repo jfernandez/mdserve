@@ -5,7 +5,7 @@ use axum::{
         Path as AxumPath, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
-    http::{StatusCode, header},
+    http::{HeaderMap, StatusCode, header},
     response::{Html, IntoResponse},
     routing::get,
 };
@@ -27,6 +27,8 @@ use tower_http::cors::CorsLayer;
 
 const TEMPLATE: &str = include_str!("../template.html");
 const MERMAID_JS: &str = include_str!("../mermaid.min.js");
+
+const MERMAID_ETAG: &str = concat!("\"", env!("CARGO_PKG_VERSION"), "\"");
 
 type SharedMarkdownState = Arc<Mutex<MarkdownState>>;
 
@@ -255,12 +257,36 @@ async fn serve_raw(State(state): State<SharedMarkdownState>) -> impl IntoRespons
     }
 }
 
-async fn serve_mermaid_js() -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "application/javascript")],
-        MERMAID_JS,
-    )
+async fn serve_mermaid_js(headers: HeaderMap) -> impl IntoResponse {
+    // Check if client has current version cached
+    if is_etag_match(&headers) {
+        return mermaid_response(StatusCode::NOT_MODIFIED, None);
+    }
+
+    mermaid_response(StatusCode::OK, Some(MERMAID_JS))
+}
+
+fn is_etag_match(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|etags| etags.split(',').any(|tag| tag.trim() == MERMAID_ETAG))
+}
+
+fn mermaid_response(status: StatusCode, body: Option<&'static str>) -> impl IntoResponse {
+    // Use no-cache to force revalidation on each request. This ensures clients
+    // get updated content when mdserve is rebuilt with a new Mermaid version,
+    // while still benefiting from 304 responses via ETag matching.
+    let headers = [
+        (header::CONTENT_TYPE, "application/javascript"),
+        (header::ETAG, MERMAID_ETAG),
+        (header::CACHE_CONTROL, "public, no-cache"),
+    ];
+
+    match body {
+        Some(content) => (status, headers, content).into_response(),
+        None => (status, headers).into_response(),
+    }
 }
 
 async fn serve_static_file(

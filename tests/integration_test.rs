@@ -403,3 +403,53 @@ classDiagram
         .count();
     assert_eq!(script_occurrences, 1);
 }
+
+#[tokio::test]
+async fn test_mermaid_js_etag_caching() {
+    let (server, _temp_file) = create_test_server("# Test").await;
+
+    // First request - should return 200 with ETag
+    let response = server.get("/mermaid.min.js").await;
+    assert_eq!(response.status_code(), 200);
+
+    let etag = response.header("etag");
+    assert!(!etag.is_empty(), "ETag header should be present");
+
+    let cache_control = response.header("cache-control");
+    let cache_control_str = cache_control.to_str().unwrap();
+    assert!(cache_control_str.contains("public"));
+    assert!(cache_control_str.contains("no-cache"));
+
+    let content_type = response.header("content-type");
+    assert_eq!(content_type, "application/javascript");
+
+    // Verify content is not empty
+    assert!(!response.as_bytes().is_empty());
+
+    // Second request with matching ETag - should return 304
+    let response_304 = server
+        .get("/mermaid.min.js")
+        .add_header(
+            axum::http::header::IF_NONE_MATCH,
+            axum::http::HeaderValue::from_str(etag.to_str().unwrap()).unwrap(),
+        )
+        .await;
+
+    assert_eq!(response_304.status_code(), 304);
+    assert_eq!(response_304.header("etag"), etag);
+
+    // Body should be empty for 304
+    assert!(response_304.as_bytes().is_empty());
+
+    // Request with non-matching ETag - should return 200
+    let response_200 = server
+        .get("/mermaid.min.js")
+        .add_header(
+            axum::http::header::IF_NONE_MATCH,
+            axum::http::HeaderValue::from_static("\"different-etag\""),
+        )
+        .await;
+
+    assert_eq!(response_200.status_code(), 200);
+    assert!(!response_200.as_bytes().is_empty());
+}
