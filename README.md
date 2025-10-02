@@ -39,9 +39,15 @@ This will automatically detect your platform and install the latest binary to yo
 #### Using Cargo
 
 ⚠️ Name conflict: This project is not the `mdserve` crate on crates.io.
-Do not run cargo install mdserve. I’m coordinating with that crate’s owner on naming.
+Do not run cargo install mdserve. I'm coordinating with that crate's owner on naming.
 
-#### Using the Nix Package Manager
+#### Arch Linux (AUR)
+
+```bash
+yay -S mdserve
+```
+
+#### Nix Package Manager
 
 ``` bash
 nix profile install github:jfernandez/mdserve
