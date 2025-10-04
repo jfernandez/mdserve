@@ -94,7 +94,7 @@ detect_platform() {
     # Normalize OS
     case "$os" in
         Linux*) os="linux" ;;
-        Darwin*) os="darwin" ;;
+        Darwin*) fatal "macOS is not supported by this installer. Please install using Homebrew: brew install mdserve" ;;
         CYGWIN*|MINGW*|MSYS*) fatal "Windows is not currently supported" ;;
         *) fatal "Unsupported operating system: $os" ;;
     esac
@@ -109,8 +109,6 @@ detect_platform() {
     # Map to binary names used in releases
     case "$os-$arch" in
         linux-x86_64) echo "x86_64-unknown-linux-musl" ;;
-        darwin-x86_64) echo "x86_64-apple-darwin" ;;
-        darwin-aarch64) echo "aarch64-apple-darwin" ;;
         *) fatal "No binary available for $os-$arch" ;;
     esac
 }
