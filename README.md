@@ -34,8 +34,9 @@ This will automatically detect your platform and install the latest binary to yo
 
 #### Using Cargo
 
-⚠️ Name conflict: This project is not the `mdserve` crate on crates.io.
-Do not run cargo install mdserve. I'm coordinating with that crate's owner on naming.
+```bash
+cargo install mdserve
+```
 
 #### Arch Linux (AUR)
 
