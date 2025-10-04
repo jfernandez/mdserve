@@ -5,6 +5,24 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Markdown Preview</title>
 
+    <script>
+    MathJax = {
+        tex: {
+        inlineMath: [['$', '$'], ['\$', '\$']],
+        displayMath: [['$$', '$$'], ['\$$', '\$$']],
+        },
+        options: {
+        renderActions: {
+            findScript: [10, function (doc) {
+            // Custom actions can be added here
+            }, '']
+        }
+        }
+    };
+    </script>
+
+    <!-- {MATHJAX_ASSETS} -->
+
     <!-- Critical: Apply theme before first paint to prevent flash -->
     <script>
         (function() {

@@ -27,6 +27,7 @@ use tower_http::cors::CorsLayer;
 
 const TEMPLATE: &str = include_str!("../template.html");
 const MERMAID_JS: &str = include_str!("../mermaid.min.js");
+const MATHJAX: &str = include_str!("../tex-mml-chtml.js");
 
 const MERMAID_ETAG: &str = concat!("\"", env!("CARGO_PKG_VERSION"), "\"");
 
@@ -118,9 +119,18 @@ impl MarkdownState {
             ""
         };
 
+        let has_mathjax = html_body.contains("$");
+
+        let mathjax_assets = if has_mathjax {
+            r#"<script src="/tex-mml-chtml.js"></script>"#
+        } else {
+            ""
+        };
+
         TEMPLATE
             .replace("{CONTENT}", &html_body)
             .replace("<!-- {MERMAID_ASSETS} -->", mermaid_assets)
+            .replace("<!-- {MATHJAX_ASSETS} -->", mathjax_assets)
     }
 }
 
@@ -185,6 +195,7 @@ pub fn new_router(file_path: impl AsRef<Path>) -> Result<Router> {
         .route("/raw", get(serve_raw))
         .route("/ws", get(websocket_handler))
         .route("/mermaid.min.js", get(serve_mermaid_js))
+        .route("/tex-mml-chtml.js", get(serve_mathjax))
         .route("/*path", get(serve_static_file))
         .layer(CorsLayer::permissive())
         .with_state(state);
@@ -287,6 +298,14 @@ fn mermaid_response(status: StatusCode, body: Option<&'static str>) -> impl Into
         Some(content) => (status, headers, content).into_response(),
         None => (status, headers).into_response(),
     }
+}
+
+async fn serve_mathjax() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/javascript")],
+        MATHJAX,
+    )
 }
 
 async fn serve_static_file(
