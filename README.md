@@ -19,10 +19,6 @@ Just run `mdserve file.md` and start writing. One statically-compiled executable
 ### macOS (Homebrew)
 
 ```bash
-# Add the tap
-brew tap jfernandez/mdserve
-
-# Install mdserve
 brew install mdserve
 ```
 
