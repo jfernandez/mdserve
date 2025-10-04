@@ -15,7 +15,7 @@ struct Args {
     file: PathBuf,
 
     /// Hostname (domain or IP address) to listen on
-    #[arg(short = 'H', long, default_value = "localhost")]
+    #[arg(short = 'H', long, default_value = "127.0.0.1")]
     hostname: String,
 
     /// Port to serve on
