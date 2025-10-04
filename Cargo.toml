@@ -5,6 +5,9 @@ authors = ["Jose Fernandez <me@jrfernandez.com>"]
 edition = "2024"
 license = "MIT"
 description = "Fast markdown preview server with live reload and theme support"
+repository = "https://github.com/jfernandez/mdserve"
+homepage = "https://github.com/jfernandez/mdserve"
+documentation = "https://github.com/jfernandez/mdserve#readme"
 
 [dependencies]
 axum = { version = "0.7.9", features = ["ws"] }
