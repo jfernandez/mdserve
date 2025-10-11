@@ -38,10 +38,10 @@ This will automatically detect your platform and install the latest binary to yo
 cargo install mdserve
 ```
 
-#### Arch Linux (AUR)
+#### Arch Linux
 
 ```bash
-yay -S mdserve
+sudo pacman -S mdserve
 ```
 
 #### Nix Package Manager
