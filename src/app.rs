@@ -216,8 +216,7 @@ pub async fn serve_markdown(
     let listen_addr = format_host(hostname, port);
     println!("📄 Serving markdown file: {}", file_path.display());
     println!("🌐 Server running at: http://{listen_addr}");
-    println!("📝 Raw markdown at: http://{listen_addr}/raw");
-    println!("⚡ Live reload enabled - file changes will update content instantly");
+    println!("⚡ Live reload enabled");
     println!("\nPress Ctrl+C to stop the server");
 
     axum::serve(listener, router).await?;
