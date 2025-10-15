@@ -10,13 +10,14 @@ use axum::{
     Router,
 };
 use futures_util::{SinkExt, StreamExt};
+use minijinja::{context, value::Value, Environment};
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
     net::Ipv6Addr,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::SystemTime,
 };
 use tokio::{
@@ -25,12 +26,20 @@ use tokio::{
 };
 use tower_http::cors::CorsLayer;
 
-const TEMPLATE: &str = include_str!("../template.html");
-const MERMAID_JS: &str = include_str!("../mermaid.min.js");
-
+const TEMPLATE_NAME: &str = "main.html";
+static TEMPLATE_ENV: OnceLock<Environment<'static>> = OnceLock::new();
+const MERMAID_JS: &str = include_str!("../static/js/mermaid.min.js");
 const MERMAID_ETAG: &str = concat!("\"", env!("CARGO_PKG_VERSION"), "\"");
 
 type SharedMarkdownState = Arc<Mutex<MarkdownState>>;
+
+fn template_env() -> &'static Environment<'static> {
+    TEMPLATE_ENV.get_or_init(|| {
+        let mut env = Environment::new();
+        minijinja_embed::load_templates!(&mut env);
+        env
+    })
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
@@ -59,7 +68,7 @@ impl MarkdownState {
         let metadata = fs::metadata(&file_path)?;
         let last_modified = metadata.modified()?;
         let content = fs::read_to_string(&file_path)?;
-        let cached_html = Self::markdown_to_html(&content);
+        let cached_html = Self::markdown_to_html(&content)?;
         let (change_tx, _) = broadcast::channel::<ServerMessage>(16);
 
         let base_dir = file_path
@@ -89,7 +98,7 @@ impl MarkdownState {
 
         if current_modified > self.last_modified {
             let content = fs::read_to_string(&self.file_path)?;
-            self.cached_html = Self::markdown_to_html(&content);
+            self.cached_html = Self::markdown_to_html(&content)?;
             self.last_modified = current_modified;
 
             // Send reload signal to all WebSocket clients
@@ -101,26 +110,23 @@ impl MarkdownState {
         }
     }
 
-    fn markdown_to_html(content: &str) -> String {
+    fn markdown_to_html(content: &str) -> Result<String> {
         // Create GFM options with HTML rendering enabled
         let mut options = markdown::Options::gfm();
         options.compile.allow_dangerous_html = true;
 
         let html_body = markdown::to_html_with_options(content, &options)
             .unwrap_or_else(|_| "Error parsing markdown".to_string());
-
-        // Check if the HTML contains mermaid code blocks
         let has_mermaid = html_body.contains(r#"class="language-mermaid""#);
 
-        let mermaid_assets = if has_mermaid {
-            r#"<script src="/mermaid.min.js"></script>"#
-        } else {
-            ""
-        };
+        let env = template_env();
+        let template = env.get_template(TEMPLATE_NAME)?;
+        let rendered = template.render(context! {
+            content => Value::from_safe_string(html_body),
+            mermaid_enabled => has_mermaid,
+        })?;
 
-        TEMPLATE
-            .replace("{CONTENT}", &html_body)
-            .replace("<!-- {MERMAID_ASSETS} -->", mermaid_assets)
+        Ok(rendered)
     }
 }
 
