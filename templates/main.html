@@ -279,8 +279,9 @@
         img { max-width: 100%; height: auto; }
     </style>
 
-    <!-- {MERMAID_ASSETS} -->
-
+    {% if mermaid_enabled %}
+    <script src="/mermaid.min.js"></script>
+    {% endif %}
     <script>
         let lastModified = Date.now();
 
@@ -474,7 +475,7 @@
 <body>
 <button class="theme-toggle" onclick="openThemeModal()">🎨</button>
 <div id="content">
-{CONTENT}
+{{ content }}
 </div>
 
 <div class="theme-modal" id="themeModal">
