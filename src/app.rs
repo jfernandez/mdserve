@@ -1,13 +1,13 @@
 use anyhow::Result;
 use axum::{
-    Router,
     extract::{
-        Path as AxumPath, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
+        Path as AxumPath, State, WebSocketUpgrade,
     },
-    http::{HeaderMap, StatusCode, header},
+    http::{header, HeaderMap, StatusCode},
     response::{Html, IntoResponse},
     routing::get,
+    Router,
 };
 use futures_util::{SinkExt, StreamExt};
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
@@ -21,7 +21,7 @@ use std::{
 };
 use tokio::{
     net::TcpListener,
-    sync::{Mutex, broadcast, mpsc},
+    sync::{broadcast, mpsc, Mutex},
 };
 use tower_http::cors::CorsLayer;
 
@@ -417,10 +417,10 @@ async fn handle_websocket(socket: WebSocket, state: SharedMarkdownState) {
     let send_task = tokio::spawn(async move {
         // Listen for file changes
         while let Ok(reload_msg) = change_rx.recv().await {
-            if let Ok(json) = serde_json::to_string(&reload_msg)
-                && sender.send(Message::Text(json)).await.is_err()
-            {
-                break;
+            if let Ok(json) = serde_json::to_string(&reload_msg) {
+                if sender.send(Message::Text(json)).await.is_err() {
+                    break;
+                }
             }
         }
     });

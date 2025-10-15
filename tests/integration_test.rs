@@ -1,5 +1,5 @@
 use axum_test::TestServer;
-use mdserve::{ServerMessage, new_router};
+use mdserve::{new_router, ServerMessage};
 use std::fs;
 use tempfile::NamedTempFile;
 
