@@ -1,39 +1,93 @@
 use axum_test::TestServer;
-use mdserve::{new_router, ServerMessage};
+use mdserve::{new_router, scan_markdown_files};
 use std::fs;
-use tempfile::NamedTempFile;
+use std::time::Duration;
+use tempfile::{tempdir, Builder, NamedTempFile, TempDir};
 
-async fn create_test_server(content: &str) -> (TestServer, NamedTempFile) {
-    let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+const FILE_WATCH_DELAY_MS: u64 = 100;
+const WEBSOCKET_TIMEOUT_SECS: u64 = 5;
+
+const TEST_FILE_1_CONTENT: &str = "# Test 1\n\nContent of test1";
+const TEST_FILE_2_CONTENT: &str = "# Test 2\n\nContent of test2";
+const TEST_FILE_3_CONTENT: &str = "# Test 3\n\nContent of test3";
+
+fn create_test_server_impl(content: &str, use_http: bool) -> (TestServer, NamedTempFile) {
+    let temp_file = Builder::new()
+        .suffix(".md")
+        .tempfile()
+        .expect("Failed to create temp file");
     fs::write(&temp_file, content).expect("Failed to write temp file");
 
-    // Canonicalize the path for consistent absolute path handling
     let canonical_path = temp_file
         .path()
         .canonicalize()
         .unwrap_or_else(|_| temp_file.path().to_path_buf());
-    let router = new_router(canonical_path).expect("Failed to create router");
-    let server = TestServer::new(router).expect("Failed to create test server");
+
+    let base_dir = canonical_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .to_path_buf();
+    let tracked_files = vec![canonical_path];
+    let is_directory_mode = false;
+
+    let router =
+        new_router(base_dir, tracked_files, is_directory_mode).expect("Failed to create router");
+
+    let server = if use_http {
+        TestServer::builder()
+            .http_transport()
+            .build(router)
+            .expect("Failed to create test server")
+    } else {
+        TestServer::new(router).expect("Failed to create test server")
+    };
 
     (server, temp_file)
 }
 
+async fn create_test_server(content: &str) -> (TestServer, NamedTempFile) {
+    create_test_server_impl(content, false)
+}
+
 async fn create_test_server_with_http(content: &str) -> (TestServer, NamedTempFile) {
-    let temp_file = NamedTempFile::new().expect("Failed to create temp file");
-    fs::write(&temp_file, content).expect("Failed to write temp file");
+    create_test_server_impl(content, true)
+}
 
-    // Canonicalize the path for consistent absolute path handling
-    let canonical_path = temp_file
-        .path()
-        .canonicalize()
-        .unwrap_or_else(|_| temp_file.path().to_path_buf());
-    let router = new_router(canonical_path).expect("Failed to create router");
-    let server = TestServer::builder()
-        .http_transport()
-        .build(router)
-        .expect("Failed to create test server");
+fn create_directory_server_impl(use_http: bool) -> (TestServer, TempDir) {
+    let temp_dir = tempdir().expect("Failed to create temp dir");
 
-    (server, temp_file)
+    fs::write(temp_dir.path().join("test1.md"), TEST_FILE_1_CONTENT)
+        .expect("Failed to write test1.md");
+    fs::write(temp_dir.path().join("test2.markdown"), TEST_FILE_2_CONTENT)
+        .expect("Failed to write test2.markdown");
+    fs::write(temp_dir.path().join("test3.md"), TEST_FILE_3_CONTENT)
+        .expect("Failed to write test3.md");
+
+    let base_dir = temp_dir.path().to_path_buf();
+    let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan markdown files");
+    let is_directory_mode = true;
+
+    let router =
+        new_router(base_dir, tracked_files, is_directory_mode).expect("Failed to create router");
+
+    let server = if use_http {
+        TestServer::builder()
+            .http_transport()
+            .build(router)
+            .expect("Failed to create test server")
+    } else {
+        TestServer::new(router).expect("Failed to create test server")
+    };
+
+    (server, temp_dir)
+}
+
+async fn create_directory_server() -> (TestServer, TempDir) {
+    create_directory_server_impl(false)
+}
+
+async fn create_directory_server_with_http() -> (TestServer, TempDir) {
+    create_directory_server_impl(true)
 }
 
 #[tokio::test]
@@ -59,20 +113,6 @@ async fn test_server_starts_and_serves_basic_markdown() {
 }
 
 #[tokio::test]
-async fn test_server_serves_raw_markdown() {
-    let content = "# Raw Test\n\n- Item 1\n- Item 2";
-    let (server, _temp_file) = create_test_server(content).await;
-
-    let response = server.get("/raw").await;
-
-    assert_eq!(response.status_code(), 200);
-    let body = response.text();
-
-    // Should return exact markdown content
-    assert_eq!(body, content);
-}
-
-#[tokio::test]
 async fn test_websocket_connection() {
     let (server, _temp_file) = create_test_server_with_http("# WebSocket Test").await;
 
@@ -83,6 +123,8 @@ async fn test_websocket_connection() {
 
 #[tokio::test]
 async fn test_file_modification_updates_via_websocket() {
+    use mdserve::ServerMessage;
+
     let (server, temp_file) = create_test_server_with_http("# Original Content").await;
 
     let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
@@ -91,11 +133,11 @@ async fn test_file_modification_updates_via_websocket() {
     fs::write(&temp_file, "# Modified Content").expect("Failed to modify file");
 
     // Add a small delay to allow file watcher to detect change
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
 
     // Should receive reload signal via WebSocket (with timeout)
     let update_result = tokio::time::timeout(
-        tokio::time::Duration::from_secs(5),
+        Duration::from_secs(WEBSOCKET_TIMEOUT_SECS),
         websocket.receive_json::<ServerMessage>(),
     )
     .await;
@@ -188,8 +230,12 @@ async fn test_image_serving() {
     let img_path = temp_dir.path().join("test.png");
     fs::write(&img_path, png_data).expect("Failed to write image file");
 
-    // Create router with the markdown file
-    let router = new_router(md_path).expect("Failed to create router");
+    // Create router with the markdown file (single-file mode)
+    let base_dir = temp_dir.path().to_path_buf();
+    let tracked_files = vec![md_path];
+    let is_directory_mode = false;
+    let router =
+        new_router(base_dir, tracked_files, is_directory_mode).expect("Failed to create router");
     let server = TestServer::new(router).expect("Failed to create test server");
 
     // Test that markdown includes img tag
@@ -221,8 +267,12 @@ async fn test_non_image_files_not_served() {
     let txt_path = temp_dir.path().join("secret.txt");
     fs::write(&txt_path, "secret content").expect("Failed to write txt file");
 
-    // Create router with the markdown file
-    let router = new_router(md_path).expect("Failed to create router");
+    // Create router with the markdown file (single-file mode)
+    let base_dir = temp_dir.path().to_path_buf();
+    let tracked_files = vec![md_path];
+    let is_directory_mode = false;
+    let router =
+        new_router(base_dir, tracked_files, is_directory_mode).expect("Failed to create router");
     let server = TestServer::new(router).expect("Failed to create test server");
 
     // Test that non-image files return 404
@@ -452,4 +502,334 @@ async fn test_mermaid_js_etag_caching() {
 
     assert_eq!(response_200.status_code(), 200);
     assert!(!response_200.as_bytes().is_empty());
+}
+
+// Directory mode tests
+
+#[tokio::test]
+async fn test_directory_mode_serves_multiple_files() {
+    let (server, _temp_dir) = create_directory_server().await;
+
+    // Test accessing first file
+    let response1 = server.get("/test1.md").await;
+    assert_eq!(response1.status_code(), 200);
+    let body1 = response1.text();
+    assert!(body1.contains("<h1>Test 1</h1>"));
+    assert!(body1.contains("Content of test1"));
+
+    // Test accessing second file with .markdown extension
+    let response2 = server.get("/test2.markdown").await;
+    assert_eq!(response2.status_code(), 200);
+    let body2 = response2.text();
+    assert!(body2.contains("<h1>Test 2</h1>"));
+    assert!(body2.contains("Content of test2"));
+
+    // Test accessing third file
+    let response3 = server.get("/test3.md").await;
+    assert_eq!(response3.status_code(), 200);
+    let body3 = response3.text();
+    assert!(body3.contains("<h1>Test 3</h1>"));
+    assert!(body3.contains("Content of test3"));
+}
+
+#[tokio::test]
+async fn test_directory_mode_file_not_found() {
+    let (server, _temp_dir) = create_directory_server().await;
+
+    // Test non-existent markdown file
+    let response = server.get("/nonexistent.md").await;
+    assert_eq!(response.status_code(), 404);
+}
+
+#[tokio::test]
+async fn test_directory_mode_has_navigation_sidebar() {
+    let (server, _temp_dir) = create_directory_server().await;
+
+    let response = server.get("/test1.md").await;
+    assert_eq!(response.status_code(), 200);
+    let body = response.text();
+
+    // Check for navigation elements
+    assert!(body.contains(r#"<nav class="sidebar">"#));
+    assert!(body.contains(r#"<ul class="file-list">"#));
+
+    // Check that all files appear in navigation
+    assert!(body.contains("test1.md"));
+    assert!(body.contains("test2.markdown"));
+    assert!(body.contains("test3.md"));
+}
+
+#[tokio::test]
+async fn test_single_file_mode_no_navigation_sidebar() {
+    let (server, _temp_file) = create_test_server("# Single File Test").await;
+
+    let response = server.get("/").await;
+    assert_eq!(response.status_code(), 200);
+    let body = response.text();
+
+    // Verify no navigation sidebar in single-file mode
+    assert!(!body.contains(r#"<nav class="sidebar">"#));
+    assert!(!body.contains("<h3>Files</h3>"));
+    assert!(!body.contains(r#"<ul class="file-list">"#));
+}
+
+#[tokio::test]
+async fn test_directory_mode_active_file_highlighting() {
+    let (server, _temp_dir) = create_directory_server().await;
+
+    // Access test1.md and verify it's marked as active
+    let response1 = server.get("/test1.md").await;
+    assert_eq!(response1.status_code(), 200);
+    let body1 = response1.text();
+
+    // Verify test1.md link has active class on the same line
+    assert!(
+        body1.contains(r#"href="/test1.md" class="active""#),
+        "test1.md link should have href and class on same line"
+    );
+
+    // Verify test1.md is the only active link
+    let active_link_count = body1.matches(r#"class="active""#).count();
+    assert_eq!(active_link_count, 1, "Should have exactly one active link");
+
+    // Access test2.markdown and verify it's marked as active
+    let response2 = server.get("/test2.markdown").await;
+    assert_eq!(response2.status_code(), 200);
+    let body2 = response2.text();
+
+    // Verify test2.markdown link has active class on the same line
+    assert!(
+        body2.contains(r#"href="/test2.markdown" class="active""#),
+        "test2.markdown link should have href and class on same line"
+    );
+}
+
+#[tokio::test]
+async fn test_directory_mode_file_order() {
+    let (server, _temp_dir) = create_directory_server().await;
+
+    let response = server.get("/test1.md").await;
+    assert_eq!(response.status_code(), 200);
+    let body = response.text();
+
+    // Find the positions of each file link in the HTML
+    let test1_pos = body.find("test1.md").expect("test1.md not found");
+    let test2_pos = body
+        .find("test2.markdown")
+        .expect("test2.markdown not found");
+    let test3_pos = body.find("test3.md").expect("test3.md not found");
+
+    // Verify alphabetical order
+    assert!(
+        test1_pos < test2_pos,
+        "test1.md should appear before test2.markdown"
+    );
+    assert!(
+        test2_pos < test3_pos,
+        "test2.markdown should appear before test3.md"
+    );
+}
+
+#[tokio::test]
+async fn test_directory_mode_websocket_file_modification() {
+    use mdserve::ServerMessage;
+
+    let (server, temp_dir) = create_directory_server_with_http().await;
+
+    let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
+
+    // Modify one of the tracked files
+    let test_file = temp_dir.path().join("test1.md");
+    fs::write(&test_file, "# Modified Test 1\n\nContent has changed")
+        .expect("Failed to modify file");
+
+    // Add a small delay to allow file watcher to detect change
+    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+    // Should receive reload signal via WebSocket
+    let update_result = tokio::time::timeout(
+        Duration::from_secs(WEBSOCKET_TIMEOUT_SECS),
+        websocket.receive_json::<ServerMessage>(),
+    )
+    .await;
+
+    match update_result {
+        Ok(update_message) => {
+            if let ServerMessage::Reload = update_message {
+                // Success - we received a reload signal
+            } else {
+                panic!("Expected Reload message after file modification");
+            }
+        }
+        Err(_) => {
+            panic!("Timeout waiting for WebSocket update after file modification");
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_directory_mode_new_file_triggers_reload() {
+    use mdserve::ServerMessage;
+
+    let (server, temp_dir) = create_directory_server_with_http().await;
+
+    let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
+
+    // Create a new markdown file in the directory
+    let new_file = temp_dir.path().join("test4.md");
+    fs::write(&new_file, "# Test 4\n\nThis is a new file").expect("Failed to create new file");
+
+    // Add a small delay to allow file watcher to detect change
+    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+    // Should receive reload signal via WebSocket
+    let update_result = tokio::time::timeout(
+        Duration::from_secs(WEBSOCKET_TIMEOUT_SECS),
+        websocket.receive_json::<ServerMessage>(),
+    )
+    .await;
+
+    match update_result {
+        Ok(update_message) => {
+            if let ServerMessage::Reload = update_message {
+                // Success - we received a reload signal
+            } else {
+                panic!("Expected Reload message after new file creation");
+            }
+        }
+        Err(_) => {
+            panic!("Timeout waiting for WebSocket update after new file creation");
+        }
+    }
+
+    // Verify the new file is accessible and appears in navigation
+    let response = server.get("/test1.md").await;
+    assert_eq!(response.status_code(), 200);
+    let body = response.text();
+
+    // Check that the new file appears in the navigation
+    assert!(
+        body.contains("test4.md"),
+        "New file should appear in navigation"
+    );
+
+    // Verify the new file is accessible directly
+    let new_file_response = server.get("/test4.md").await;
+    assert_eq!(new_file_response.status_code(), 200);
+    let new_file_body = new_file_response.text();
+    assert!(new_file_body.contains("<h1>Test 4</h1>"));
+    assert!(new_file_body.contains("This is a new file"));
+}
+
+#[tokio::test]
+async fn test_directory_mode_file_deletion_triggers_reload() {
+    use mdserve::ServerMessage;
+
+    let (server, temp_dir) = create_directory_server_with_http().await;
+
+    let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
+
+    // Delete one of the tracked files
+    let file_to_delete = temp_dir.path().join("test3.md");
+    fs::remove_file(&file_to_delete).expect("Failed to delete file");
+
+    // Add a small delay to allow file watcher to detect change
+    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+    // Should receive reload signal via WebSocket
+    let update_result = tokio::time::timeout(
+        Duration::from_secs(WEBSOCKET_TIMEOUT_SECS),
+        websocket.receive_json::<ServerMessage>(),
+    )
+    .await;
+
+    match update_result {
+        Ok(update_message) => {
+            if let ServerMessage::Reload = update_message {
+                // Success - we received a reload signal
+            } else {
+                panic!("Expected Reload message after file deletion");
+            }
+        }
+        Err(_) => {
+            panic!("Timeout waiting for WebSocket update after file deletion");
+        }
+    }
+
+    // Verify the deleted file no longer appears in navigation
+    let response = server.get("/test1.md").await;
+    assert_eq!(response.status_code(), 200);
+    let body = response.text();
+
+    // Check that the deleted file does NOT appear in navigation
+    assert!(
+        !body.contains("test3.md"),
+        "Deleted file should not appear in navigation"
+    );
+
+    // Check that other files still appear
+    assert!(body.contains("test1.md"));
+    assert!(body.contains("test2.markdown"));
+
+    // Verify the deleted file returns 404
+    let deleted_file_response = server.get("/test3.md").await;
+    assert_eq!(deleted_file_response.status_code(), 404);
+}
+
+#[tokio::test]
+async fn test_directory_mode_file_rename_triggers_reload() {
+    use mdserve::ServerMessage;
+
+    let (server, temp_dir) = create_directory_server_with_http().await;
+
+    let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
+
+    let old_path = temp_dir.path().join("test3.md");
+    let new_path = temp_dir.path().join("test3-renamed.md");
+    fs::rename(&old_path, &new_path).expect("Failed to rename file");
+
+    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+    let update_result = tokio::time::timeout(
+        Duration::from_secs(WEBSOCKET_TIMEOUT_SECS),
+        websocket.receive_json::<ServerMessage>(),
+    )
+    .await;
+
+    match update_result {
+        Ok(update_message) => {
+            if let ServerMessage::Reload = update_message {
+            } else {
+                panic!("Expected Reload message after file rename");
+            }
+        }
+        Err(_) => {
+            panic!("Timeout waiting for WebSocket update after file rename");
+        }
+    }
+
+    let response = server.get("/test1.md").await;
+    assert_eq!(response.status_code(), 200);
+    let body = response.text();
+
+    assert!(
+        !body.contains("test3.md"),
+        "Old filename should not appear in navigation after rename"
+    );
+
+    assert!(
+        body.contains("test3-renamed.md"),
+        "New filename should appear in navigation after rename"
+    );
+
+    assert!(body.contains("test1.md"));
+    assert!(body.contains("test2.markdown"));
+
+    let old_file_response = server.get("/test3.md").await;
+    assert_eq!(old_file_response.status_code(), 404);
+
+    let new_file_response = server.get("/test3-renamed.md").await;
+    assert_eq!(new_file_response.status_code(), 200);
+    let new_file_body = new_file_response.text();
+    assert!(new_file_body.contains("<h1>Test 3</h1>"));
 }
