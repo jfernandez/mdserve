@@ -82,7 +82,6 @@ mdserve README.md -p 8080
 Once running, the server provides (default: [http://localhost:3000](http://localhost:3000)):
 
 - **[`/`](http://localhost:3000/)** - Rendered HTML with live reload via WebSocket
-- **[`/raw`](http://localhost:3000/raw)** - Raw markdown content (useful for debugging)
 - **[`/ws`](http://localhost:3000/ws)** - WebSocket endpoint for real-time updates
 
 ## Theme System
