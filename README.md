@@ -9,6 +9,7 @@ Just run `mdserve file.md` and start writing. One statically-compiled executable
 ## Features
 
 - ⚡ **Instant Live Reload** - Real-time updates via WebSocket when markdown file changes
+- 📁 **Directory Mode** - Serve all markdown files in a directory with a navigation sidebar
 - 🎨 **Multiple Themes** - Built-in theme selector with 5 themes including Catppuccin variants
 - 📝 **GitHub Flavored Markdown** - Full GFM support including tables, strikethrough, code blocks, and task lists
 - 📊 **Mermaid Diagrams** - Automatic rendering of flowcharts, sequence diagrams, class diagrams, and more
@@ -68,13 +69,29 @@ Download the appropriate binary for your platform from the [latest release](http
 ### Basic Usage
 
 ```bash
-# Serve a markdown file on default port (3000)
+# Serve a single markdown file on default port (3000)
 mdserve README.md
+
+# Serve all markdown files in a directory
+mdserve docs/
 
 # Serve on custom port
 mdserve README.md --port 8080
-mdserve README.md -p 8080
+mdserve docs/ -p 8080
+
+# Serve on custom hostname and port
+mdserve README.md --hostname 0.0.0.0 --port 8080
 ```
+
+### Single-File vs Directory Mode
+
+**Single-File Mode**: When you pass a file path, mdserve serves that specific markdown file with a clean, focused view.
+
+**Directory Mode**: When you pass a directory path, mdserve automatically:
+- Scans and serves all `.md` and `.markdown` files in that directory
+- Displays a navigation sidebar for easy switching between files
+- Watches for new markdown files added to the directory
+- Only monitors the immediate directory (non-recursive)
 
 
 ## Endpoints
@@ -103,6 +120,10 @@ Once running, the server provides (default: [http://localhost:3000](http://local
 *mdserve running with the Catppuccin Macchiato theme - notice the warm, cozy colors and excellent readability*
 
 ![mdserve with Catppuccin Macchiato theme](mdserve-catppuccin-macchiato.png)
+
+## Documentation
+
+For detailed information about mdserve's internal architecture, design decisions, and how it works under the hood, see [Architecture Documentation](docs/architecture.md).
 
 ## Development
 
