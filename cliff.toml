@@ -14,11 +14,17 @@ body = """
 {% set commits_in_group = commits | filter(attribute="group", value=group_name) %}\
 {% if commits_in_group | length > 0 %}\
     ### {{ group_name }}
-    {% for commit in commits_in_group %}
-        - {{ commit.message | upper_first }}\
-    {% endfor %}
+    {% for commit in commits_in_group %}\
+    - {{ commit.message | split(pat="\n") | first | trim | upper_first }}
+    {% endfor %}\
 {% endif %}\
-{% endfor %}\n
+{% endfor %}\
+{% set other_commits = commits | filter(attribute="group", value="Other") %}\
+{% if other_commits | length > 0 %}\
+    {% for commit in other_commits %}\
+    - {{ commit.message | split(pat="\n") | first | trim | upper_first }}
+    {% endfor %}\
+{% endif %}\n
 """
 # remove leading and trailing whitespace from the template
 trim = true
@@ -32,6 +38,8 @@ filter_unconventional = false
 split_commits = false
 # regex for parsing and grouping commits
 commit_parsers = [
+    { message = "^Merge pull request", skip = true },
+    { message = "^Merge branch", skip = true },
     { message = "^feat", group = "Features" },
     { message = "^fix", group = "Bug Fixes" },
     { message = "^doc", group = "Documentation" },
@@ -44,6 +52,7 @@ commit_parsers = [
     { message = "^chore\\(release\\): prepare for", skip = true },
     { message = "^chore", group = "Miscellaneous Tasks" },
     { body = ".*security", group = "Security" },
+    { message = ".*", group = "Other" },
 ]
 # protect breaking changes from being skipped due to matching a skipping commit_parser
 protect_breaking_commits = false
