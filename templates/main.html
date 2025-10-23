@@ -209,18 +209,17 @@
 
         /* Main Content Area */
         #content {
-            margin-left: var(--sidebar-width);
-            width: var(--content-max-width);
-            max-width: calc(100% - var(--sidebar-width));
+            /* Center content in remaining space while avoiding sidebar overlap */
+            margin-left: max(var(--sidebar-width), calc((100vw - var(--content-max-width)) / 2));
+            margin-right: auto;
+            max-width: var(--content-max-width);
             padding: 20px;
             min-height: 100vh;
-            transition: margin-left var(--transition-speed) var(--transition-timing),
-                        max-width var(--transition-speed) var(--transition-timing);
+            transition: margin-left var(--transition-speed) var(--transition-timing);
         }
 
         body.sidebar-collapsed #content {
-            margin-left: var(--sidebar-collapsed-width);
-            max-width: calc(100% - var(--sidebar-collapsed-width));
+            margin-left: max(var(--sidebar-collapsed-width), calc((100vw - var(--content-max-width)) / 2));
         }
 
         /* Sidebar Toggle Button */
