@@ -4,6 +4,8 @@ Fast markdown preview server with **live reload** and **theme support**.
 
 Just run `mdserve file.md` and start writing. One statically-compiled executable that runs anywhere - no installation, no dependencies.
 
+[![Packaging status](https://repology.org/badge/vertical-allrepos/mdserve.svg)](https://repology.org/project/mdserve/versions)
+
 ![Terminal output when starting mdserve](mdserve-terminal-output.png)
 
 ## Features
