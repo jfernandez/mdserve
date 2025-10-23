@@ -172,11 +172,6 @@ impl MarkdownState {
         Ok(())
     }
 
-    fn remove_tracked_file(&mut self, filename: &str) -> Result<()> {
-        self.tracked_files.remove(filename);
-        Ok(())
-    }
-
     fn markdown_to_html(content: &str) -> Result<String> {
         let mut options = markdown::Options::gfm();
         options.compile.allow_dangerous_html = true;
@@ -201,17 +196,9 @@ async fn handle_file_event(event: Event, state: &SharedMarkdownState) {
                         if is_markdown_file(old_path) || is_markdown_file(new_path) {
                             let mut state = state.lock().await;
 
-                            if let Some(old_filename) =
-                                old_path.file_name().and_then(|n| n.to_str())
-                            {
-                                let _ = state.remove_tracked_file(old_filename);
-                            }
-
-                            if is_markdown_file(new_path) && state.is_directory_mode {
+                            if state.is_directory_mode && is_markdown_file(new_path) {
                                 let _ = state.add_tracked_file(new_path.clone());
                             }
-
-                            let _ = state.change_tx.send(ServerMessage::Reload);
                         }
                     }
                 }
@@ -223,18 +210,11 @@ async fn handle_file_event(event: Event, state: &SharedMarkdownState) {
                         }
 
                         match rename_mode {
-                            RenameMode::From => {
-                                if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                                    let mut state = state.lock().await;
-                                    let _ = state.remove_tracked_file(filename);
-                                    let _ = state.change_tx.send(ServerMessage::Reload);
-                                }
-                            }
+                            RenameMode::From => {}
                             RenameMode::To => {
                                 let mut state = state.lock().await;
                                 if state.is_directory_mode {
                                     let _ = state.add_tracked_file(path.clone());
-                                    let _ = state.change_tx.send(ServerMessage::Reload);
                                 }
                             }
                             RenameMode::Any => {
@@ -250,20 +230,10 @@ async fn handle_file_event(event: Event, state: &SharedMarkdownState) {
                                 // both events arrive after the atomic rename operation has completed, so:
                                 //   - Old path: exists() = false (file no longer at this location)
                                 //   - New path: exists() = true (file now at this location)
-                                if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                                    let mut state = state.lock().await;
+                                let mut state = state.lock().await;
 
-                                    if path.exists() {
-                                        // File exists - it's the new name (renamed TO)
-                                        if state.is_directory_mode {
-                                            let _ = state.add_tracked_file(path.clone());
-                                            let _ = state.change_tx.send(ServerMessage::Reload);
-                                        }
-                                    } else {
-                                        // File doesn't exist - it's the old name (renamed FROM)
-                                        let _ = state.remove_tracked_file(filename);
-                                        let _ = state.change_tx.send(ServerMessage::Reload);
-                                    }
+                                if state.is_directory_mode && path.exists() {
+                                    let _ = state.add_tracked_file(path.clone());
                                 }
                             }
                             _ => unreachable!(),
@@ -281,7 +251,8 @@ async fn handle_file_event(event: Event, state: &SharedMarkdownState) {
 
                 if is_markdown_file(path) {
                     match event.kind {
-                        notify::EventKind::Modify(_) | notify::EventKind::Create(_) => {
+                        notify::EventKind::Create(_)
+                        | notify::EventKind::Modify(notify::event::ModifyKind::Data(_)) => {
                             let mut state = state.lock().await;
 
                             if state.tracked_files.contains_key(&filename) {
@@ -295,10 +266,10 @@ async fn handle_file_event(event: Event, state: &SharedMarkdownState) {
                             }
                         }
                         notify::EventKind::Remove(_) => {
-                            let mut state = state.lock().await;
-                            if state.remove_tracked_file(&filename).is_ok() {
-                                let _ = state.change_tx.send(ServerMessage::Reload);
-                            }
+                            // Don't remove files from tracking. Editors like neovim save by
+                            // renaming the file to a backup, then creating a new one. If we
+                            // removed the file here, HTTP requests during that window would
+                            // see empty tracked_files and return 404.
                         }
                         _ => {}
                     }

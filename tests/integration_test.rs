@@ -722,114 +722,143 @@ async fn test_directory_mode_new_file_triggers_reload() {
 }
 
 #[tokio::test]
-async fn test_directory_mode_file_deletion_triggers_reload() {
-    use mdserve::ServerMessage;
+async fn test_editor_save_simulation_single_file_mode() {
+    // Simulates neovim's save behavior: rename original to backup, create new file
+    // Should NOT get 404 at any point during this sequence
+    let (server, temp_file) = create_test_server_with_http("# Original\n\nOriginal content").await;
 
-    let (server, temp_dir) = create_directory_server_with_http().await;
+    let file_path = temp_file.path().to_path_buf();
+    let backup_path = file_path.with_extension("md~");
 
-    let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
+    // Verify original content is served
+    let initial_response = server.get("/").await;
+    assert_eq!(initial_response.status_code(), 200);
+    assert!(initial_response.text().contains("Original content"));
 
-    // Delete one of the tracked files
-    let file_to_delete = temp_dir.path().join("test3.md");
-    fs::remove_file(&file_to_delete).expect("Failed to delete file");
+    // Simulate editor save: rename to backup
+    fs::rename(&file_path, &backup_path).expect("Failed to rename to backup");
 
-    // Add a small delay to allow file watcher to detect change
     tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
 
-    // Should receive reload signal via WebSocket
-    let update_result = tokio::time::timeout(
-        Duration::from_secs(WEBSOCKET_TIMEOUT_SECS),
-        websocket.receive_json::<ServerMessage>(),
-    )
-    .await;
-
-    match update_result {
-        Ok(update_message) => {
-            if let ServerMessage::Reload = update_message {
-                // Success - we received a reload signal
-            } else {
-                panic!("Expected Reload message after file deletion");
-            }
-        }
-        Err(_) => {
-            panic!("Timeout waiting for WebSocket update after file deletion");
-        }
-    }
-
-    // Verify the deleted file no longer appears in navigation
-    let response = server.get("/test1.md").await;
-    assert_eq!(response.status_code(), 200);
-    let body = response.text();
-
-    // Check that the deleted file does NOT appear in navigation
-    assert!(
-        !body.contains("test3.md"),
-        "Deleted file should not appear in navigation"
+    // CRITICAL: File should still be accessible (not 404) even though renamed
+    let during_save_response = server.get("/").await;
+    assert_eq!(
+        during_save_response.status_code(),
+        200,
+        "File should not return 404 during editor save"
     );
 
-    // Check that other files still appear
-    assert!(body.contains("test1.md"));
-    assert!(body.contains("test2.markdown"));
+    // Create new file with updated content
+    fs::write(&file_path, "# Updated\n\nUpdated content").expect("Failed to write new file");
 
-    // Verify the deleted file returns 404
-    let deleted_file_response = server.get("/test3.md").await;
-    assert_eq!(deleted_file_response.status_code(), 404);
+    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+    // Verify updated content is now served
+    let final_response = server.get("/").await;
+    assert_eq!(final_response.status_code(), 200);
+    let final_body = final_response.text();
+    assert!(
+        final_body.contains("Updated content"),
+        "Should serve updated content after save"
+    );
+    assert!(
+        !final_body.contains("Original content"),
+        "Should not serve old content"
+    );
+
+    // Cleanup backup file
+    let _ = fs::remove_file(&backup_path);
 }
 
 #[tokio::test]
-async fn test_directory_mode_file_rename_triggers_reload() {
-    use mdserve::ServerMessage;
-
+async fn test_editor_save_simulation_directory_mode() {
+    // Tests the same editor save behavior in directory mode
     let (server, temp_dir) = create_directory_server_with_http().await;
 
-    let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
+    let file_path = temp_dir.path().join("test1.md");
+    let backup_path = temp_dir.path().join("test1.md~");
 
-    let old_path = temp_dir.path().join("test3.md");
-    let new_path = temp_dir.path().join("test3-renamed.md");
-    fs::rename(&old_path, &new_path).expect("Failed to rename file");
+    // Verify original content
+    let initial_response = server.get("/test1.md").await;
+    assert_eq!(initial_response.status_code(), 200);
+    assert!(initial_response.text().contains("Content of test1"));
+
+    // Simulate editor save: rename to backup
+    fs::rename(&file_path, &backup_path).expect("Failed to rename to backup");
 
     tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
 
+    // CRITICAL: File should still be accessible during save
+    let during_save_response = server.get("/test1.md").await;
+    assert_eq!(
+        during_save_response.status_code(),
+        200,
+        "File should not return 404 during editor save in directory mode"
+    );
+
+    // Create new file with updated content
+    fs::write(&file_path, "# Test 1 Updated\n\nUpdated content").expect("Failed to write new file");
+
+    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+    // Verify updated content
+    let final_response = server.get("/test1.md").await;
+    assert_eq!(final_response.status_code(), 200);
+    let final_body = final_response.text();
+    assert!(
+        final_body.contains("Updated content"),
+        "Should serve updated content after save"
+    );
+
+    // Cleanup backup file
+    let _ = fs::remove_file(&backup_path);
+}
+
+#[tokio::test]
+async fn test_no_404_during_editor_save_sequence() {
+    // Tests that HTTP requests during each step of the save never see 404
+    use mdserve::ServerMessage;
+
+    let (server, temp_dir) = create_directory_server_with_http().await;
+    let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
+
+    let file_path = temp_dir.path().join("test1.md");
+    let backup_path = temp_dir.path().join("test1.md~");
+
+    // Step 1: Rename to backup
+    fs::rename(&file_path, &backup_path).expect("Failed to rename to backup");
+    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+    // Request should still work (no 404)
+    let response_after_rename = server.get("/test1.md").await;
+    assert_eq!(
+        response_after_rename.status_code(),
+        200,
+        "Should not get 404 after rename to backup"
+    );
+
+    // Step 2: Create new file
+    fs::write(&file_path, "# Test 1 Updated\n\nNew content").expect("Failed to write new file");
+    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+    // Request should work with new content
+    let response_after_create = server.get("/test1.md").await;
+    assert_eq!(
+        response_after_create.status_code(),
+        200,
+        "Should successfully serve after new file created"
+    );
+    assert!(response_after_create.text().contains("New content"));
+
+    // Should have received reload
     let update_result = tokio::time::timeout(
         Duration::from_secs(WEBSOCKET_TIMEOUT_SECS),
         websocket.receive_json::<ServerMessage>(),
     )
     .await;
 
-    match update_result {
-        Ok(update_message) => {
-            if let ServerMessage::Reload = update_message {
-            } else {
-                panic!("Expected Reload message after file rename");
-            }
-        }
-        Err(_) => {
-            panic!("Timeout waiting for WebSocket update after file rename");
-        }
-    }
+    assert!(update_result.is_ok(), "Should receive reload after save");
 
-    let response = server.get("/test1.md").await;
-    assert_eq!(response.status_code(), 200);
-    let body = response.text();
-
-    assert!(
-        !body.contains("test3.md"),
-        "Old filename should not appear in navigation after rename"
-    );
-
-    assert!(
-        body.contains("test3-renamed.md"),
-        "New filename should appear in navigation after rename"
-    );
-
-    assert!(body.contains("test1.md"));
-    assert!(body.contains("test2.markdown"));
-
-    let old_file_response = server.get("/test3.md").await;
-    assert_eq!(old_file_response.status_code(), 404);
-
-    let new_file_response = server.get("/test3-renamed.md").await;
-    assert_eq!(new_file_response.status_code(), 200);
-    let new_file_body = new_file_response.text();
-    assert!(new_file_body.contains("<h1>Test 3</h1>"));
+    // Cleanup
+    let _ = fs::remove_file(&backup_path);
 }
