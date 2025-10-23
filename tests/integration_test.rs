@@ -10,6 +10,8 @@ const WEBSOCKET_TIMEOUT_SECS: u64 = 5;
 const TEST_FILE_1_CONTENT: &str = "# Test 1\n\nContent of test1";
 const TEST_FILE_2_CONTENT: &str = "# Test 2\n\nContent of test2";
 const TEST_FILE_3_CONTENT: &str = "# Test 3\n\nContent of test3";
+const YAML_FRONTMATTER_CONTENT: &str = "---\ntitle: Test Post\nauthor: Name\n---\n\n# Test Post\n";
+const TOML_FRONTMATTER_CONTENT: &str = "+++\ntitle = \"Test Post\"\n+++\n\n# Test Post\n";
 
 fn create_test_server_impl(content: &str, use_http: bool) -> (TestServer, NamedTempFile) {
     let temp_file = Builder::new()
@@ -861,4 +863,37 @@ async fn test_no_404_during_editor_save_sequence() {
 
     // Cleanup
     let _ = fs::remove_file(&backup_path);
+}
+
+#[tokio::test]
+async fn test_yaml_frontmatter_is_stripped() {
+    let (server, _temp_file) = create_test_server(YAML_FRONTMATTER_CONTENT).await;
+
+    let response = server.get("/").await;
+
+    assert_eq!(response.status_code(), 200);
+    let body = response.text();
+
+    // Frontmatter should be stripped
+    assert!(!body.contains("title: Test Post"));
+    assert!(!body.contains("author: Name"));
+
+    // Content should still be rendered
+    assert!(body.contains("<h1>Test Post</h1>"));
+}
+
+#[tokio::test]
+async fn test_toml_frontmatter_is_stripped() {
+    let (server, _temp_file) = create_test_server(TOML_FRONTMATTER_CONTENT).await;
+
+    let response = server.get("/").await;
+
+    assert_eq!(response.status_code(), 200);
+    let body = response.text();
+
+    // TOML frontmatter should be stripped
+    assert!(!body.contains("title = \"Test Post\""));
+
+    // Content should still be rendered
+    assert!(body.contains("<h1>Test Post</h1>"));
 }

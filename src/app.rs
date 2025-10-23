@@ -175,6 +175,7 @@ impl MarkdownState {
     fn markdown_to_html(content: &str) -> Result<String> {
         let mut options = markdown::Options::gfm();
         options.compile.allow_dangerous_html = true;
+        options.parse.constructs.frontmatter = true;
 
         let html_body = markdown::to_html_with_options(content, &options)
             .unwrap_or_else(|_| "Error parsing markdown".to_string());
