@@ -1,3 +1,7 @@
+## [0.5.1] - 2025-10-28
+### Bug Fixes
+- Handle temp-file-rename edits in file watcher
+
 ## [0.5.0] - 2025-10-23
 ### Features
 - Add directory mode for serving multiple markdown files
