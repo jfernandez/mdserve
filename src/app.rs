@@ -184,60 +184,60 @@ impl MarkdownState {
     }
 }
 
+/// Handles a markdown file that may have been created or modified.
+/// Refreshes tracked files or adds new files in directory mode, sending reload notifications.
+async fn handle_markdown_file_change(path: &Path, state: &SharedMarkdownState) {
+    if !is_markdown_file(path) {
+        return;
+    }
+
+    let filename = path.file_name().and_then(|n| n.to_str()).map(String::from);
+    let Some(filename) = filename else {
+        return;
+    };
+
+    let mut state_guard = state.lock().await;
+
+    // If file is already tracked, refresh its content
+    if state_guard.tracked_files.contains_key(&filename) {
+        if state_guard.refresh_file(&filename).is_ok() {
+            let _ = state_guard.change_tx.send(ServerMessage::Reload);
+        }
+    } else if state_guard.is_directory_mode {
+        // New file in directory mode - add and reload
+        if state_guard.add_tracked_file(path.to_path_buf()).is_ok() {
+            let _ = state_guard.change_tx.send(ServerMessage::Reload);
+        }
+    }
+}
+
 async fn handle_file_event(event: Event, state: &SharedMarkdownState) {
     match event.kind {
         notify::EventKind::Modify(notify::event::ModifyKind::Name(rename_mode)) => {
             use notify::event::RenameMode;
             match rename_mode {
                 RenameMode::Both => {
+                    // Linux/Windows: Both old and new paths provided in single event
                     if event.paths.len() == 2 {
-                        let old_path = &event.paths[0];
                         let new_path = &event.paths[1];
-
-                        if is_markdown_file(old_path) || is_markdown_file(new_path) {
-                            let mut state = state.lock().await;
-
-                            if state.is_directory_mode && is_markdown_file(new_path) {
-                                let _ = state.add_tracked_file(new_path.clone());
-                            }
-                        }
+                        handle_markdown_file_change(new_path, state).await;
                     }
                 }
-                RenameMode::From | RenameMode::To | RenameMode::Any => {
-                    // Common guard for single-path rename events
+                RenameMode::From => {
+                    // File being renamed away - ignore
+                }
+                RenameMode::To => {
+                    // File renamed to this location
                     if let Some(path) = event.paths.first() {
-                        if !is_markdown_file(path) {
-                            return;
-                        }
-
-                        match rename_mode {
-                            RenameMode::From => {}
-                            RenameMode::To => {
-                                let mut state = state.lock().await;
-                                if state.is_directory_mode {
-                                    let _ = state.add_tracked_file(path.clone());
-                                }
-                            }
-                            RenameMode::Any => {
-                                // MacOS FSEvents sends RenameMode::Any for both old and new paths separately,
-                                // unlike Linux which sends RenameMode::From/To or RenameMode::Both.
-                                //
-                                // MacOS behavior: Two separate events arrive after the rename completes:
-                                //   1. Modify(Name(Any)) with path = old filename
-                                //   2. Modify(Name(Any)) with path = new filename
-                                //
-                                // Since FSEvents doesn't provide tracker metadata (attr:tracker is None),
-                                // we use file existence to distinguish old from new. This is reliable because
-                                // both events arrive after the atomic rename operation has completed, so:
-                                //   - Old path: exists() = false (file no longer at this location)
-                                //   - New path: exists() = true (file now at this location)
-                                let mut state = state.lock().await;
-
-                                if state.is_directory_mode && path.exists() {
-                                    let _ = state.add_tracked_file(path.clone());
-                                }
-                            }
-                            _ => unreachable!(),
+                        handle_markdown_file_change(path, state).await;
+                    }
+                }
+                RenameMode::Any => {
+                    // macOS: Sends separate events for old and new paths
+                    // Use file existence to distinguish old (doesn't exist) from new (exists)
+                    if let Some(path) = event.paths.first() {
+                        if path.exists() {
+                            handle_markdown_file_change(path, state).await;
                         }
                     }
                 }
@@ -246,25 +246,11 @@ async fn handle_file_event(event: Event, state: &SharedMarkdownState) {
         }
         _ => {
             for path in &event.paths {
-                let filename = path.file_name().and_then(|n| n.to_str()).map(String::from);
-
-                let Some(filename) = filename else { continue };
-
                 if is_markdown_file(path) {
                     match event.kind {
                         notify::EventKind::Create(_)
                         | notify::EventKind::Modify(notify::event::ModifyKind::Data(_)) => {
-                            let mut state = state.lock().await;
-
-                            if state.tracked_files.contains_key(&filename) {
-                                if state.refresh_file(&filename).is_ok() {
-                                    let _ = state.change_tx.send(ServerMessage::Reload);
-                                }
-                            } else if state.is_directory_mode
-                                && state.add_tracked_file(path.clone()).is_ok()
-                            {
-                                let _ = state.change_tx.send(ServerMessage::Reload);
-                            }
+                            handle_markdown_file_change(path, state).await;
                         }
                         notify::EventKind::Remove(_) => {
                             // Don't remove files from tracking. Editors like neovim save by
@@ -279,8 +265,8 @@ async fn handle_file_event(event: Event, state: &SharedMarkdownState) {
                         notify::EventKind::Modify(_)
                         | notify::EventKind::Create(_)
                         | notify::EventKind::Remove(_) => {
-                            let state = state.lock().await;
-                            let _ = state.change_tx.send(ServerMessage::Reload);
+                            let state_guard = state.lock().await;
+                            let _ = state_guard.change_tx.send(ServerMessage::Reload);
                         }
                         _ => {}
                     }

@@ -1,5 +1,5 @@
 use axum_test::TestServer;
-use mdserve::{new_router, scan_markdown_files};
+use mdserve::{new_router, scan_markdown_files, ServerMessage};
 use std::fs;
 use std::time::Duration;
 use tempfile::{tempdir, Builder, NamedTempFile, TempDir};
@@ -125,8 +125,6 @@ async fn test_websocket_connection() {
 
 #[tokio::test]
 async fn test_file_modification_updates_via_websocket() {
-    use mdserve::ServerMessage;
-
     let (server, temp_file) = create_test_server_with_http("# Original Content").await;
 
     let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
@@ -634,8 +632,6 @@ async fn test_directory_mode_file_order() {
 
 #[tokio::test]
 async fn test_directory_mode_websocket_file_modification() {
-    use mdserve::ServerMessage;
-
     let (server, temp_dir) = create_directory_server_with_http().await;
 
     let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
@@ -671,8 +667,6 @@ async fn test_directory_mode_websocket_file_modification() {
 
 #[tokio::test]
 async fn test_directory_mode_new_file_triggers_reload() {
-    use mdserve::ServerMessage;
-
     let (server, temp_dir) = create_directory_server_with_http().await;
 
     let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
@@ -819,8 +813,6 @@ async fn test_editor_save_simulation_directory_mode() {
 #[tokio::test]
 async fn test_no_404_during_editor_save_sequence() {
     // Tests that HTTP requests during each step of the save never see 404
-    use mdserve::ServerMessage;
-
     let (server, temp_dir) = create_directory_server_with_http().await;
     let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
 
@@ -896,4 +888,143 @@ async fn test_toml_frontmatter_is_stripped() {
 
     // Content should still be rendered
     assert!(body.contains("<h1>Test Post</h1>"));
+}
+
+#[tokio::test]
+async fn test_temp_file_rename_triggers_reload_single_file_mode() {
+    // Simulates Claude Code's save behavior: write to temp file, then rename over original
+    // This pattern triggers Modify(Name(Any)) events instead of Modify(Data(Content))
+
+    // Create server with initial file - file is now being tracked and watched
+    let (server, temp_file) = create_test_server_with_http("# Original\n\nOriginal content").await;
+
+    // Connect WebSocket to receive reload notifications
+    let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
+
+    let file_path = temp_file.path().to_path_buf();
+    let temp_write_path = file_path.with_extension("md.tmp.12345");
+
+    // Verify file is already tracked and serving content BEFORE the edit
+    let initial_response = server.get("/").await;
+    assert_eq!(initial_response.status_code(), 200);
+    assert!(
+        initial_response.text().contains("Original content"),
+        "File should be tracked and serving content before edit"
+    );
+
+    // Simulate Claude Code's save: write to temp file
+    fs::write(
+        &temp_write_path,
+        "# Updated\n\nUpdated content via temp file",
+    )
+    .expect("Failed to write temp file");
+
+    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+    // Rename temp file over original (atomic operation)
+    fs::rename(&temp_write_path, &file_path).expect("Failed to rename temp file");
+
+    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+    // Should receive reload signal via WebSocket
+    let update_result = tokio::time::timeout(
+        Duration::from_secs(WEBSOCKET_TIMEOUT_SECS),
+        websocket.receive_json::<ServerMessage>(),
+    )
+    .await;
+
+    match update_result {
+        Ok(update_message) => {
+            if let ServerMessage::Reload = update_message {
+                // Success - we received a reload signal
+            } else {
+                panic!("Expected Reload message after temp file rename");
+            }
+        }
+        Err(_) => {
+            panic!("Timeout waiting for WebSocket update after temp file rename");
+        }
+    }
+
+    // Verify updated content is now served
+    let final_response = server.get("/").await;
+    assert_eq!(final_response.status_code(), 200);
+    let final_body = final_response.text();
+    assert!(
+        final_body.contains("Updated content via temp file"),
+        "Should serve updated content after temp file rename"
+    );
+    assert!(
+        !final_body.contains("Original content"),
+        "Should not serve old content"
+    );
+}
+
+#[tokio::test]
+async fn test_temp_file_rename_triggers_reload_directory_mode() {
+    // Tests the same temp file rename behavior in directory mode
+
+    // Create server with directory of files - all files are now being tracked and watched
+    let (server, temp_dir) = create_directory_server_with_http().await;
+
+    // Connect WebSocket to receive reload notifications
+    let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
+
+    let file_path = temp_dir.path().join("test1.md");
+    let temp_write_path = temp_dir.path().join("test1.md.tmp.67890");
+
+    // Verify test1.md is already tracked and serving content BEFORE the edit
+    let initial_response = server.get("/test1.md").await;
+    assert_eq!(initial_response.status_code(), 200);
+    assert!(
+        initial_response.text().contains("Content of test1"),
+        "File should be tracked and serving content before edit"
+    );
+
+    // Write to temp file
+    fs::write(
+        &temp_write_path,
+        "# Test 1 Updated\n\nUpdated via temp file rename",
+    )
+    .expect("Failed to write temp file");
+
+    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+    // Rename temp file over original
+    fs::rename(&temp_write_path, &file_path).expect("Failed to rename temp file");
+
+    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+    // Should receive reload signal
+    let update_result = tokio::time::timeout(
+        Duration::from_secs(WEBSOCKET_TIMEOUT_SECS),
+        websocket.receive_json::<ServerMessage>(),
+    )
+    .await;
+
+    match update_result {
+        Ok(update_message) => {
+            if let ServerMessage::Reload = update_message {
+                // Success - we received a reload signal
+            } else {
+                panic!("Expected Reload message after temp file rename in directory mode");
+            }
+        }
+        Err(_) => {
+            panic!("Timeout waiting for WebSocket update after temp file rename in directory mode");
+        }
+    }
+
+    // Verify updated content
+    let final_response = server.get("/test1.md").await;
+    assert_eq!(final_response.status_code(), 200);
+    let final_body = final_response.text();
+    assert!(
+        final_body.contains("Updated via temp file rename"),
+        "Should serve updated content after temp file rename"
+    );
+    assert!(
+        !final_body.contains("Content of test1"),
+        "Should not serve old content"
+    );
 }
