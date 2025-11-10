@@ -121,14 +121,10 @@
         color var(--transition-speed) var(--transition-timing);
     }
 
-      {
-      % if show_navigation %
-    }
-
+    {% if show_navigation %}
     /* ============================================
          Multi-file Navigation Layout
          ============================================ */
-
     html,
     body {
       margin: 0;
@@ -264,9 +260,7 @@
       cursor: e-resize;
     }
 
-      {
-      % else %
-    }
+    {% else %}
 
     /* Single-file layout */
     body {
@@ -275,9 +269,7 @@
       padding: 20px;
     }
 
-      {
-      % endif %
-    }
+    {% endif %}
 
     .theme-toggle {
       position: fixed;
