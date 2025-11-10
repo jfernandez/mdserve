@@ -77,7 +77,7 @@ pub fn scan_markdown_files(dir: &Path) -> Result<Vec<PathBuf>> {
 }
 
 fn string_colored(value: impl Display) -> String {
-    return format!("\x1b[1;38;5;153m{value}\x1b[0m");
+    format!("\x1b[1;38;5;153m{value}\x1b[0m")
 }
 
 fn is_markdown_file(path: &Path) -> bool {
@@ -365,12 +365,7 @@ pub async fn serve_markdown(
     let hostname = hostname.as_ref();
 
     let first_file = tracked_files.first().cloned();
-    let router = new_router(
-        base_dir.clone(),
-        template.clone(),
-        tracked_files,
-        is_directory_mode,
-    )?;
+    let router = new_router(base_dir.clone(), template, tracked_files, is_directory_mode)?;
 
     let listener = TcpListener::bind((hostname, port)).await?;
 
@@ -449,8 +444,9 @@ async fn serve_file(
 
 async fn render_markdown(state: &MarkdownState, current_file: &str) -> (StatusCode, Html<String>) {
     let env = template_env();
+    let template_name = state.template.as_ref();
 
-    let template = match env.get_template(&format!("{}.html", state.template.as_ref())) {
+    let template = match env.get_template(&format!("{}.html", template_name)) {
         Ok(t) => t,
         Err(e) => {
             return (
@@ -483,6 +479,7 @@ async fn render_markdown(state: &MarkdownState, current_file: &str) -> (StatusCo
 
         match template.render(context! {
             content => content,
+            template_name => template_name,
             mermaid_enabled => has_mermaid,
             show_navigation => true,
             files => files,
@@ -499,6 +496,7 @@ async fn render_markdown(state: &MarkdownState, current_file: &str) -> (StatusCo
     } else {
         match template.render(context! {
             content => content,
+            template_name => template_name,
             mermaid_enabled => has_mermaid,
             show_navigation => false,
         }) {

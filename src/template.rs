@@ -1,6 +1,6 @@
 use clap::ValueEnum;
 
-#[derive(ValueEnum, Clone)]
+#[derive(ValueEnum, Clone, Copy)]
 /// HTML template for markdown preview
 pub enum Template {
     /// A classic, simple template

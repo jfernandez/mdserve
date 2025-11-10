@@ -13,7 +13,13 @@ const TEST_FILE_3_CONTENT: &str = "# Test 3\n\nContent of test3";
 const YAML_FRONTMATTER_CONTENT: &str = "---\ntitle: Test Post\nauthor: Name\n---\n\n# Test Post\n";
 const TOML_FRONTMATTER_CONTENT: &str = "+++\ntitle = \"Test Post\"\n+++\n\n# Test Post\n";
 
-fn create_test_server_impl(content: &str, use_http: bool) -> (TestServer, NamedTempFile) {
+fn create_test_server_impl(
+    content: &str,
+    use_http: bool,
+    template: Option<Template>,
+) -> (TestServer, NamedTempFile) {
+    let template = template.unwrap_or(Template::Classic);
+
     let temp_file = Builder::new()
         .suffix(".md")
         .tempfile()
@@ -32,13 +38,8 @@ fn create_test_server_impl(content: &str, use_http: bool) -> (TestServer, NamedT
     let tracked_files = vec![canonical_path];
     let is_directory_mode = false;
 
-    let router = new_router(
-        base_dir,
-        Template::Classic,
-        tracked_files,
-        is_directory_mode,
-    )
-    .expect("Failed to create router");
+    let router = new_router(base_dir, template, tracked_files, is_directory_mode)
+        .expect("Failed to create router");
 
     let server = if use_http {
         TestServer::builder()
@@ -53,11 +54,18 @@ fn create_test_server_impl(content: &str, use_http: bool) -> (TestServer, NamedT
 }
 
 async fn create_test_server(content: &str) -> (TestServer, NamedTempFile) {
-    create_test_server_impl(content, false)
+    create_test_server_impl(content, false, None)
 }
 
 async fn create_test_server_with_http(content: &str) -> (TestServer, NamedTempFile) {
-    create_test_server_impl(content, true)
+    create_test_server_impl(content, true, None)
+}
+
+async fn create_test_server_with_template(
+    content: &str,
+    template: Template,
+) -> (TestServer, NamedTempFile) {
+    create_test_server_impl(content, true, Some(template))
 }
 
 fn create_directory_server_impl(use_http: bool) -> (TestServer, TempDir) {
@@ -1049,4 +1057,38 @@ async fn test_temp_file_rename_triggers_reload_directory_mode() {
         !final_body.contains("Content of test1"),
         "Should not serve old content"
     );
+}
+
+#[tokio::test]
+async fn test_template() {
+    let template_classic = Template::Classic;
+    let template_cv = Template::Cv;
+
+    // First test template set to the classic
+    let (server, _temp_file) = create_test_server_with_template(
+        "# Hello World\n\nThis is **bold** text.",
+        template_classic,
+    )
+    .await;
+
+    let response = server.get("/").await;
+
+    assert_eq!(response.status_code(), 200);
+    let body = response.text();
+
+    // Check template id (classic)
+    assert!(body.contains(&format!("id=\"{}\"", template_classic.as_ref())));
+
+    // Second test template set to the cv
+    let (server, _temp_file) =
+        create_test_server_with_template("# Hello World\n\nThis is **bold** text.", template_cv)
+            .await;
+
+    let response = server.get("/").await;
+
+    assert_eq!(response.status_code(), 200);
+    let body = response.text();
+
+    // Check template id (cv)
+    assert!(body.contains(&format!("id=\"{}\"", template_cv.as_ref())));
 }
