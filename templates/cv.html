@@ -1,0 +1,270 @@
+{% extends "base.html" %}
+{% block template_css %}
+<style>
+html,
+body,
+div,
+span,
+applet,
+object,
+iframe,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+blockquote,
+pre,
+a,
+abbr,
+acronym,
+address,
+big,
+cite,
+code,
+del,
+dfn,
+em,
+img,
+ins,
+kbd,
+q,
+s,
+samp,
+small,
+strike,
+strong,
+sub,
+sup,
+tt,
+var,
+b,
+u,
+i,
+center,
+dl,
+dt,
+dd,
+ol,
+ul,
+li,
+fieldset,
+form,
+label,
+legend,
+table,
+caption,
+tbody,
+tfoot,
+thead,
+tr,
+th,
+td,
+article,
+aside,
+canvas,
+details,
+embed,
+figure,
+figcaption,
+footer,
+header,
+hgroup,
+menu,
+nav,
+output,
+ruby,
+section,
+summary,
+time,
+mark,
+audio,
+video {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    font-size: 100%;
+    font: inherit;
+    vertical-align: baseline;
+}
+
+article,
+aside,
+details,
+figcaption,
+figure,
+footer,
+header,
+hgroup,
+menu,
+nav,
+section {
+    display: block;
+}
+
+/* Rewrite base.html */
+
+body {
+    line-height: 1;
+    max-width: none;
+    display: block;
+    font: normal normal 400;
+    font-size: 10pt;
+    line-height: 1.35em;
+    font-family: Verdana, sans-serif;
+}
+
+#content {
+    margin-left: max(var(--sidebar-width), calc((70vw - var(--content-max-width)) / 2));
+    max-width: none;
+}
+
+body.sidebar-collapsed #content {
+    margin-left: max(var(--sidebar-collapsed-width), calc((70vw - var(--content-max-width)) / 2));
+}
+
+/* End of rewrite base.html */
+
+#content ol,
+ul {
+    list-style: disc;
+}
+
+#content blockquote,
+q {
+    quotes: none;
+}
+
+#content blockquote:before,
+blockquote:after,
+q:before,
+q:after {
+    content: '';
+    content: none;
+}
+
+#content table {
+    border-collapse: collapse;
+    border-spacing: 0;
+}
+
+#content p {
+    position: relative;
+    left: 28%;
+    margin-bottom: 0.8em;
+    margin-right: 0;
+    width: 70%;
+}
+
+#content code {
+    font: normal normal;
+    font-size: 80%;
+    font-family: Menlo, monospace, sans-serif;
+}
+
+#content p code {
+    position: absolute;
+    left: -11%;
+}
+
+#content ul {
+    position: relative;
+    left: 30%;
+    width: 65%;
+    margin-bottom: 1em;
+}
+
+#content li {
+    padding-left: 1.25em;
+    text-indent: -1.25em;
+}
+
+#content li ul {
+    position: relative;
+    left: 0;
+    width: 100%;
+    margin-top: 0.25em;
+}
+
+#content h1,
+h2,
+h3,
+h4 {
+    font-weight: 400;
+    font-family: Cousine, Verdana, sans-serif;
+    width: 65%;
+}
+
+#content h1 {
+    text-align: left;
+    font-size: 3em;
+    line-height: 1em;
+    position: relative;
+    left: 28%;
+}
+
+#content h1+p {
+    font-style: italic;
+    font-size: 110%;
+}
+
+#content h2 {
+    font-size: 1.15em;
+    color: var(--text-color);
+    font-weight: bold;
+    margin-top: 2em;
+    position: relative;
+    top: 1.2em;
+    text-align: right;
+    width: 18%;
+}
+
+
+#content h3 {
+    font-size: 1em;
+    line-height: 2em;
+    color: var(--text-color);
+    position: relative;
+    top: 1.6em;
+    text-align: right;
+    width: 18%;
+}
+
+#content a {
+    color: var(--text-color);
+    text-decoration: none
+}
+
+#content a:hover {
+    color: #39f
+}
+
+#content #bio {
+    margin-top: 0.6em;
+}
+
+#content #links {
+    margin-top: 1.2em;
+    position: relative;
+    left: 28%;
+    color: #ccc;
+    font-family: Menlo, monospace, sans-serif;
+    font-size: 80%;
+}
+
+#content #links a {
+    text-decoration: none;
+}
+
+#content em {
+    font-style: normal;
+    color: #2d4e5e
+}
+
+#content strong {
+    font-weight: bold;
+}
+</style>
+{% endblock %}

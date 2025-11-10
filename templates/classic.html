@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block template_css %}
+<style>
+body {
+    max-width: none;
+}
+
+#content pre {
+    background-color: var(--code-bg);
+    border-radius: 6px;
+    padding: 16px;
+    overflow: auto;
+}
+
+#content code {
+    background-color: var(--code-bg);
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+
+#content pre code {
+    background-color: transparent;
+    padding: 0;
+}
+
+#content blockquote {
+    border-left: 4px solid var(--border-color-light);
+    padding-left: 16px;
+    margin-left: 0;
+    color: var(--blockquote-color);
+}
+
+#content table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 16px 0;
+}
+
+#content th, td {
+    border: 1px solid var(--border-color-light);
+    padding: 8px 12px;
+    text-align: left;
+}
+
+#content th {
+    background-color: var(--table-header-bg);
+    font-weight: bold;
+}
+
+#content h1, h2, h3, h4, h5, h6 {
+    margin-top: 24px;
+    margin-bottom: 16px;
+    font-weight: 600;
+    line-height: 1.25;
+}
+
+#content h1 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
+#content h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
+#content a { color: var(--link-color); text-decoration: none; }
+#content a:hover { text-decoration: underline; }
+#content img { max-width: 100%; height: auto; }
+</style>
+{% endblock %}

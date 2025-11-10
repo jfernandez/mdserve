@@ -1,5 +1,5 @@
 use axum_test::TestServer;
-use mdserve::{new_router, scan_markdown_files, ServerMessage};
+use mdserve::{new_router, scan_markdown_files, ServerMessage, Template};
 use std::fs;
 use std::time::Duration;
 use tempfile::{tempdir, Builder, NamedTempFile, TempDir};
@@ -32,8 +32,13 @@ fn create_test_server_impl(content: &str, use_http: bool) -> (TestServer, NamedT
     let tracked_files = vec![canonical_path];
     let is_directory_mode = false;
 
-    let router =
-        new_router(base_dir, tracked_files, is_directory_mode).expect("Failed to create router");
+    let router = new_router(
+        base_dir,
+        Template::Classic,
+        tracked_files,
+        is_directory_mode,
+    )
+    .expect("Failed to create router");
 
     let server = if use_http {
         TestServer::builder()
@@ -69,8 +74,13 @@ fn create_directory_server_impl(use_http: bool) -> (TestServer, TempDir) {
     let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan markdown files");
     let is_directory_mode = true;
 
-    let router =
-        new_router(base_dir, tracked_files, is_directory_mode).expect("Failed to create router");
+    let router = new_router(
+        base_dir,
+        Template::Classic,
+        tracked_files,
+        is_directory_mode,
+    )
+    .expect("Failed to create router");
 
     let server = if use_http {
         TestServer::builder()
@@ -234,8 +244,13 @@ async fn test_image_serving() {
     let base_dir = temp_dir.path().to_path_buf();
     let tracked_files = vec![md_path];
     let is_directory_mode = false;
-    let router =
-        new_router(base_dir, tracked_files, is_directory_mode).expect("Failed to create router");
+    let router = new_router(
+        base_dir,
+        Template::Classic,
+        tracked_files,
+        is_directory_mode,
+    )
+    .expect("Failed to create router");
     let server = TestServer::new(router).expect("Failed to create test server");
 
     // Test that markdown includes img tag
@@ -271,8 +286,13 @@ async fn test_non_image_files_not_served() {
     let base_dir = temp_dir.path().to_path_buf();
     let tracked_files = vec![md_path];
     let is_directory_mode = false;
-    let router =
-        new_router(base_dir, tracked_files, is_directory_mode).expect("Failed to create router");
+    let router = new_router(
+        base_dir,
+        Template::Classic,
+        tracked_files,
+        is_directory_mode,
+    )
+    .expect("Failed to create router");
     let server = TestServer::new(router).expect("Failed to create test server");
 
     // Test that non-image files return 404
@@ -581,6 +601,8 @@ async fn test_directory_mode_active_file_highlighting() {
     let response1 = server.get("/test1.md").await;
     assert_eq!(response1.status_code(), 200);
     let body1 = response1.text();
+
+    println!("{body1:#}");
 
     // Verify test1.md link has active class on the same line
     assert!(

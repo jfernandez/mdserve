@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Markdown Preview</title>
+
+  <!-- Critical: Apply theme and sidebar state before first paint to prevent flash -->
+  <script>
+    (function () {
+      // Apply theme immediately
+      const theme = localStorage.getItem('theme') || 'catppuccin-mocha';
+      document.documentElement.setAttribute('data-theme', theme);
+      document.documentElement.classList.add('theme-initialized');
+
+      // Apply sidebar state to both html and body elements
+      // This works because body inherits the collapsed state via CSS selectors
+      const isSidebarCollapsed = localStorage.getItem('sidebar-collapsed') === 'true';
+      if (isSidebarCollapsed) {
+        // Set on html first for early rendering
+        document.documentElement.classList.add('sidebar-collapsed');
+
+        // Transfer to body when available
+        if (document.body) {
+          document.body.classList.add('sidebar-collapsed');
+        } else {
+          document.addEventListener('DOMContentLoaded', function () {
+            document.body.classList.add('sidebar-collapsed');
+          });
+        }
+      }
+    })();
+  </script>
+
+  <style>
+    /* Prevent flash by hiding content until theme is applied */
+    html:not(.theme-initialized) body {
+      opacity: 0;
+    }
+
+    html.theme-initialized body {
+      opacity: 1;
+      transition: opacity 0.1s ease-in;
+    }
+
+    /* Universal box-sizing */
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+    }
+
+    :root {
+      --bg-color: #fff;
+      --text-color: #333;
+      --border-color: #eaecef;
+      --border-color-light: #dfe2e5;
+      --code-bg: #f6f8fa;
+      --blockquote-color: #6a737d;
+      --link-color: #0366d6;
+      --table-header-bg: #f6f8fa;
+      --sidebar-width: 250px;
+      --sidebar-collapsed-width: 48px;
+      --content-max-width: 900px;
+      --transition-speed: 0.3s;
+      --transition-timing: ease;
+    }
+
+    [data-theme="dark"] {
+      --bg-color: #0d1117;
+      --text-color: #e6edf3;
+      --border-color: #30363d;
+      --border-color-light: #21262d;
+      --code-bg: #161b22;
+      --blockquote-color: #8b949e;
+      --link-color: #58a6ff;
+      --table-header-bg: #161b22;
+    }
+
+    [data-theme="catppuccin-latte"] {
+      --bg-color: #eff1f5;
+      --text-color: #4c4f69;
+      --border-color: #bcc0cc;
+      --border-color-light: #ccd0da;
+      --code-bg: #e6e9ef;
+      --blockquote-color: #6c6f85;
+      --link-color: #1e66f5;
+      --table-header-bg: #ccd0da;
+    }
+
+    [data-theme="catppuccin-macchiato"] {
+      --bg-color: #24273a;
+      --text-color: #cad3f5;
+      --border-color: #494d64;
+      --border-color-light: #363a4f;
+      --code-bg: #1e2030;
+      --blockquote-color: #a5adcb;
+      --link-color: #8aadf4;
+      --table-header-bg: #363a4f;
+    }
+
+    [data-theme="catppuccin-mocha"] {
+      --bg-color: #1e1e2e;
+      --text-color: #cdd6f4;
+      --border-color: #45475a;
+      --border-color-light: #313244;
+      --code-bg: #181825;
+      --blockquote-color: #a6adc8;
+      --link-color: #89b4fa;
+      --table-header-bg: #313244;
+    }
+
+    /* Common body styles */
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+      line-height: 1.6;
+      color: var(--text-color);
+      background-color: var(--bg-color);
+      transition: background-color var(--transition-speed) var(--transition-timing),
+        color var(--transition-speed) var(--transition-timing);
+    }
+
+      {
+      % if show_navigation %
+    }
+
+    /* ============================================
+         Multi-file Navigation Layout
+         ============================================ */
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      display: flex;
+      max-width: none;
+      min-height: 100vh;
+      overflow-x: hidden;
+      /* Prevent horizontal scroll during transitions */
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: var(--sidebar-width);
+      min-width: var(--sidebar-width);
+      background: var(--code-bg);
+      border-right: 1px solid var(--border-color);
+      padding: 0;
+      height: 100vh;
+      position: fixed;
+      left: 0;
+      top: 0;
+      overflow-y: auto;
+      transition: width var(--transition-speed) var(--transition-timing),
+        min-width var(--transition-speed) var(--transition-timing),
+        background var(--transition-speed) var(--transition-timing);
+    }
+
+    body.sidebar-collapsed .sidebar {
+      width: var(--sidebar-collapsed-width);
+      min-width: var(--sidebar-collapsed-width);
+      overflow: hidden;
+      background: var(--bg-color);
+    }
+
+    .sidebar-header {
+      height: 68px;
+      /* Space for toggle button */
+    }
+
+    .sidebar-content {
+      padding: 0 20px 20px 20px;
+      opacity: 1;
+      transition: opacity 0.2s var(--transition-timing);
+    }
+
+    body.sidebar-collapsed .sidebar-content {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    /* File Navigation List */
+    .file-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    .file-list li {
+      margin-bottom: 4px;
+    }
+
+    .file-list a {
+      display: block;
+      padding: 8px 12px;
+      color: var(--text-color);
+      text-decoration: none;
+      border-radius: 6px;
+      transition: background 0.2s var(--transition-timing);
+      font-size: 14px;
+    }
+
+    .file-list a:hover,
+    .file-list a:focus-visible {
+      background: var(--border-color-light);
+      outline: none;
+    }
+
+    .file-list a.active {
+      background: var(--border-color-light);
+      color: var(--text-color);
+      font-weight: 600;
+    }
+
+    /* Main Content Area */
+    #content {
+      /* Center content in remaining space while avoiding sidebar overlap */
+      margin-left: max(var(--sidebar-width), calc((100vw - var(--content-max-width)) / 2));
+      margin-right: auto;
+      max-width: var(--content-max-width);
+      padding: 20px;
+      min-height: 100vh;
+      transition: margin-left var(--transition-speed) var(--transition-timing);
+    }
+
+    body.sidebar-collapsed #content {
+      margin-left: max(var(--sidebar-collapsed-width), calc((100vw - var(--content-max-width)) / 2));
+    }
+
+    /* Sidebar Toggle Button */
+    .sidebar-toggle {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      background: transparent;
+      border: none;
+      border-radius: 6px;
+      padding: 8px;
+      cursor: w-resize;
+      font-size: 18px;
+      color: var(--text-color);
+      transition: left var(--transition-speed) var(--transition-timing),
+        background 0.2s var(--transition-timing);
+      width: 40px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 102;
+    }
+
+    .sidebar-toggle:hover,
+    .sidebar-toggle:focus-visible {
+      background: var(--border-color-light);
+      outline: none;
+    }
+
+    body.sidebar-collapsed .sidebar-toggle {
+      left: 4px;
+      cursor: e-resize;
+    }
+
+      {
+      % else %
+    }
+
+    /* Single-file layout */
+    body {
+      max-width: var(--content-max-width);
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+      {
+      % endif %
+    }
+
+    .theme-toggle {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: var(--code-bg);
+      border: 1px solid var(--border-color-light);
+      border-radius: 6px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 14px;
+      color: var(--text-color);
+      transition: background 0.2s var(--transition-timing),
+        border-color var(--transition-speed) var(--transition-timing);
+      z-index: 100;
+    }
+
+    .theme-toggle:hover,
+    .theme-toggle:focus-visible {
+      background: var(--border-color-light);
+      outline: none;
+    }
+
+    .theme-modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 1000;
+      backdrop-filter: blur(4px);
+    }
+
+    .theme-modal.show {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .theme-modal-content {
+      background: var(--bg-color);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 24px;
+      max-width: 600px;
+      width: 90%;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+
+    .theme-modal h3 {
+      margin: 0 0 20px 0;
+      color: var(--text-color);
+      font-size: 18px;
+      text-align: center;
+    }
+
+    .theme-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 16px;
+    }
+
+    .theme-card {
+      border: 2px solid transparent;
+      border-radius: 8px;
+      padding: 16px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      text-align: center;
+    }
+
+    .theme-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+
+    .theme-card.selected {
+      border-color: var(--link-color);
+      box-shadow: 0 0 0 1px var(--link-color);
+    }
+
+    .theme-card-icon {
+      font-size: 24px;
+      margin-bottom: 8px;
+    }
+
+    .theme-card-name {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    .theme-card-preview {
+      display: flex;
+      gap: 4px;
+      justify-content: center;
+      margin-bottom: 8px;
+    }
+
+    .theme-color-swatch {
+      width: 16px;
+      height: 16px;
+      border-radius: 3px;
+      border: 1px solid rgba(0, 0, 0, 0.1);
+    }
+
+    .theme-card-sample {
+      font-size: 11px;
+      opacity: 0.8;
+    }
+
+    /* Theme-specific card styles */
+    .theme-card[data-theme="light"] {
+      background: #fff;
+      color: #333;
+    }
+
+    .theme-card[data-theme="dark"] {
+      background: #0d1117;
+      color: #e6edf3;
+    }
+
+    .theme-card[data-theme="catppuccin-latte"] {
+      background: #eff1f5;
+      color: #4c4f69;
+    }
+
+    .theme-card[data-theme="catppuccin-macchiato"] {
+      background: #24273a;
+      color: #cad3f5;
+    }
+
+    .theme-card[data-theme="catppuccin-mocha"] {
+      background: #1e1e2e;
+      color: #cdd6f4;
+    }
+
+    pre {
+      background-color: var(--code-bg);
+      border-radius: 6px;
+      padding: 16px;
+      overflow: auto;
+    }
+
+    code {
+      background-color: var(--code-bg);
+      padding: 2px 4px;
+      border-radius: 3px;
+      font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    }
+
+    pre code {
+      background-color: transparent;
+      padding: 0;
+    }
+
+    blockquote {
+      border-left: 4px solid var(--border-color-light);
+      padding-left: 16px;
+      margin-left: 0;
+      color: var(--blockquote-color);
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 16px 0;
+    }
+
+    th,
+    td {
+      border: 1px solid var(--border-color-light);
+      padding: 8px 12px;
+      text-align: left;
+    }
+
+    th {
+      background-color: var(--table-header-bg);
+      font-weight: bold;
+    }
+
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6 {
+      margin-top: 24px;
+      margin-bottom: 16px;
+      font-weight: 600;
+      line-height: 1.25;
+    }
+
+    h1 {
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 8px;
+    }
+
+    h2 {
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 8px;
+    }
+
+    a {
+      color: var(--link-color);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    img {
+      max-width: 100%;
+      height: auto;
+    }
+  </style>
+  {% block template_css %}{% endblock %}
+
+  {% if mermaid_enabled %}
+  <script src="/mermaid.min.js"></script>
+  {% endif %}
+  <script>
+    let lastModified = Date.now();
+
+    // Theme management
+    function initTheme() {
+      // Theme is already set by the early script to prevent flash
+      // Just update the theme selection UI to match current theme
+      const currentTheme = document.documentElement.getAttribute('data-theme');
+      updateThemeSelection(currentTheme);
+    }
+
+    function openThemeModal() {
+      const modal = document.getElementById('themeModal');
+      modal.classList.add('show');
+      updateThemeSelection(document.documentElement.getAttribute('data-theme'));
+    }
+
+    function closeThemeModal() {
+      const modal = document.getElementById('themeModal');
+      modal.classList.remove('show');
+    }
+
+    function selectTheme(theme) {
+      document.documentElement.setAttribute('data-theme', theme);
+      localStorage.setItem('theme', theme);
+      updateThemeSelection(theme);
+      updateMermaidTheme();
+      closeThemeModal();
+    }
+
+    function updateThemeSelection(selectedTheme) {
+      // Update all theme cards to show selection state
+      const cards = document.querySelectorAll('.theme-card');
+      cards.forEach(card => {
+        if (card.dataset.theme === selectedTheme) {
+          card.classList.add('selected');
+        } else {
+          card.classList.remove('selected');
+        }
+      });
+    }
+
+    // Sidebar toggle management
+    function toggleSidebar() {
+      document.body.classList.toggle('sidebar-collapsed');
+      const isCollapsed = document.body.classList.contains('sidebar-collapsed');
+      localStorage.setItem('sidebar-collapsed', isCollapsed ? 'true' : 'false');
+    }
+
+    function initSidebar() {
+      const isCollapsed = localStorage.getItem('sidebar-collapsed') === 'true';
+      if (isCollapsed) {
+        document.body.classList.add('sidebar-collapsed');
+      }
+    }
+
+    // Mermaid theme management
+    function getMermaidTheme() {
+      const currentTheme = document.documentElement.getAttribute('data-theme');
+      switch (currentTheme) {
+        case 'dark':
+        case 'catppuccin-macchiato':
+        case 'catppuccin-mocha':
+          return 'dark';
+        case 'light':
+        case 'catppuccin-latte':
+        default:
+          return 'default';
+      }
+    }
+
+    function initMermaid() {
+      if (typeof mermaid !== 'undefined') {
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: getMermaidTheme(),
+          themeVariables: {
+            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif'
+          },
+          flowchart: {
+            useMaxWidth: true,
+            htmlLabels: true
+          },
+          sequence: {
+            useMaxWidth: true
+          },
+          gantt: {
+            useMaxWidth: true
+          }
+        });
+
+        // Find and transform mermaid code blocks
+        transformMermaidCodeBlocks();
+
+        // Render all mermaid diagrams
+        mermaid.run();
+      }
+    }
+
+    function transformMermaidCodeBlocks() {
+      // Find all code blocks with language-mermaid class
+      const mermaidCodeBlocks = document.querySelectorAll('code.language-mermaid');
+
+      mermaidCodeBlocks.forEach((codeElement, index) => {
+        const preElement = codeElement.parentElement;
+        if (preElement && preElement.tagName === 'PRE') {
+          // Get the mermaid code content
+          const mermaidCode = codeElement.textContent;
+
+          // Create new mermaid div
+          const mermaidDiv = document.createElement('div');
+          mermaidDiv.className = 'mermaid';
+          mermaidDiv.id = `mermaid-${index}`;
+          mermaidDiv.textContent = mermaidCode;
+          mermaidDiv.setAttribute('data-original', mermaidCode);
+
+          // Replace the pre/code block with the mermaid div
+          preElement.parentElement.replaceChild(mermaidDiv, preElement);
+        }
+      });
+    }
+
+    function updateMermaidTheme() {
+      if (typeof mermaid !== 'undefined') {
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: getMermaidTheme(),
+          themeVariables: {
+            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif'
+          }
+        });
+
+        // Re-render all mermaid diagrams with new theme
+        const mermaidElements = document.querySelectorAll('.mermaid');
+        mermaidElements.forEach((element) => {
+          element.removeAttribute('data-processed');
+          const originalContent = element.getAttribute('data-original');
+          if (originalContent) {
+            element.textContent = originalContent;
+          }
+        });
+
+        mermaid.run();
+      }
+    }
+
+    // Auto-refresh functionality using WebSocket
+    function setupLiveReload() {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws`;
+      const socket = new WebSocket(wsUrl);
+
+      socket.onopen = function (event) {
+        console.log('WebSocket connected');
+      };
+
+      socket.onmessage = function (event) {
+        try {
+          const message = JSON.parse(event.data);
+          if (message.type === 'Reload') {
+            console.log('Reloading page via WebSocket');
+            window.location.reload();
+          }
+        } catch (error) {
+          console.error('Error parsing WebSocket message:', error);
+        }
+      };
+
+      socket.onerror = function (event) {
+        console.error('WebSocket error:', event);
+      };
+
+      socket.onclose = function (event) {
+        console.log('WebSocket closed, attempting to reconnect...');
+        // Attempt to reconnect after 3 seconds
+        setTimeout(setupLiveReload, 3000);
+      };
+    }
+
+    // Initialize theme and live reload on page load
+    document.addEventListener('DOMContentLoaded', function () {
+      initTheme();
+      initSidebar();
+      initMermaid();
+      setupLiveReload();
+
+      // Modal close functionality
+      const modal = document.getElementById('themeModal');
+
+      // Close modal when clicking outside
+      modal.addEventListener('click', function (e) {
+        if (e.target === modal) {
+          closeThemeModal();
+        }
+      });
+
+      // Close modal with ESC key
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && modal.classList.contains('show')) {
+          closeThemeModal();
+        }
+      });
+    });
+  </script>
+</head>
+
+<body>
+  {% if show_navigation %}
+  <button class="sidebar-toggle" onclick="toggleSidebar()" aria-label="Toggle sidebar">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+      stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+      <line x1="9" y1="3" x2="9" y2="21"></line>
+    </svg>
+  </button>
+  <nav class="sidebar">
+    <div class="sidebar-header"></div>
+    <div class="sidebar-content">
+      <ul class="file-list">
+        {% for file in files %}
+        <li>
+          <a href="/{{ file.name }}" {% if file.name==current_file %}class="active"{% endif %}>
+            {{ file.name }}
+          </a>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </nav>
+  {% endif %}
+
+  <button class="theme-toggle" onclick="openThemeModal()">🎨</button>
+  <div id="content">
+    {{ content }}
+  </div>
+
+  <div class="theme-modal" id="themeModal">
+    <div class="theme-modal-content">
+      <h3>Choose Theme</h3>
+      <div class="theme-grid">
+        <div class="theme-card" data-theme="catppuccin-latte" onclick="selectTheme('catppuccin-latte')">
+          <div class="theme-card-icon">☕</div>
+          <div class="theme-card-name">Catppuccin Latte</div>
+          <div class="theme-card-preview">
+            <div class="theme-color-swatch" style="background: #eff1f5;"></div>
+            <div class="theme-color-swatch" style="background: #4c4f69;"></div>
+            <div class="theme-color-swatch" style="background: #1e66f5;"></div>
+          </div>
+          <div class="theme-card-sample">Warm light theme</div>
+        </div>
+
+        <div class="theme-card" data-theme="catppuccin-macchiato" onclick="selectTheme('catppuccin-macchiato')">
+          <div class="theme-card-icon">🥛</div>
+          <div class="theme-card-name">Catppuccin Macchiato</div>
+          <div class="theme-card-preview">
+            <div class="theme-color-swatch" style="background: #24273a;"></div>
+            <div class="theme-color-swatch" style="background: #cad3f5;"></div>
+            <div class="theme-color-swatch" style="background: #8aadf4;"></div>
+          </div>
+          <div class="theme-card-sample">Medium contrast</div>
+        </div>
+
+        <div class="theme-card" data-theme="catppuccin-mocha" onclick="selectTheme('catppuccin-mocha')">
+          <div class="theme-card-icon">🐱</div>
+          <div class="theme-card-name">Catppuccin Mocha</div>
+          <div class="theme-card-preview">
+            <div class="theme-color-swatch" style="background: #1e1e2e;"></div>
+            <div class="theme-color-swatch" style="background: #cdd6f4;"></div>
+            <div class="theme-color-swatch" style="background: #89b4fa;"></div>
+          </div>
+          <div class="theme-card-sample">Dark and cozy</div>
+        </div>
+
+        <div class="theme-card" data-theme="light" onclick="selectTheme('light')">
+          <div class="theme-card-icon">☀️</div>
+          <div class="theme-card-name">Light</div>
+          <div class="theme-card-preview">
+            <div class="theme-color-swatch" style="background: #fff;"></div>
+            <div class="theme-color-swatch" style="background: #333;"></div>
+            <div class="theme-color-swatch" style="background: #0366d6;"></div>
+          </div>
+          <div class="theme-card-sample">Classic bright</div>
+        </div>
+
+        <div class="theme-card" data-theme="dark" onclick="selectTheme('dark')">
+          <div class="theme-card-icon">🌙</div>
+          <div class="theme-card-name">Dark</div>
+          <div class="theme-card-preview">
+            <div class="theme-color-swatch" style="background: #0d1117;"></div>
+            <div class="theme-color-swatch" style="background: #e6edf3;"></div>
+            <div class="theme-color-swatch" style="background: #58a6ff;"></div>
+          </div>
+          <div class="theme-card-sample">Classic dark</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+
+</html>

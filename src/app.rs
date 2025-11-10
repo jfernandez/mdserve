@@ -14,6 +14,7 @@ use minijinja::{context, value::Value, Environment};
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::{
+    fmt::Display,
     fs,
     net::Ipv6Addr,
     path::{Path, PathBuf},
@@ -26,7 +27,6 @@ use tokio::{
 };
 use tower_http::cors::CorsLayer;
 
-const TEMPLATE_NAME: &str = "main.html";
 static TEMPLATE_ENV: OnceLock<Environment<'static>> = OnceLock::new();
 const MERMAID_JS: &str = include_str!("../static/js/mermaid.min.js");
 const MERMAID_ETAG: &str = concat!("\"", env!("CARGO_PKG_VERSION"), "\"");
@@ -57,6 +57,8 @@ pub enum ServerMessage {
 
 use std::collections::HashMap;
 
+use crate::Template;
+
 pub fn scan_markdown_files(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut md_files = Vec::new();
 
@@ -74,6 +76,10 @@ pub fn scan_markdown_files(dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(md_files)
 }
 
+fn string_colored(value: impl Display) -> String {
+    return format!("\x1b[1;38;5;153m{value}\x1b[0m");
+}
+
 fn is_markdown_file(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
@@ -89,13 +95,19 @@ struct TrackedFile {
 
 struct MarkdownState {
     base_dir: PathBuf,
+    template: Template,
     tracked_files: HashMap<String, TrackedFile>,
     is_directory_mode: bool,
     change_tx: broadcast::Sender<ServerMessage>,
 }
 
 impl MarkdownState {
-    fn new(base_dir: PathBuf, file_paths: Vec<PathBuf>, is_directory_mode: bool) -> Result<Self> {
+    fn new(
+        base_dir: PathBuf,
+        template: Template,
+        file_paths: Vec<PathBuf>,
+        is_directory_mode: bool,
+    ) -> Result<Self> {
         let (change_tx, _) = broadcast::channel::<ServerMessage>(16);
 
         let mut tracked_files = HashMap::new();
@@ -119,6 +131,7 @@ impl MarkdownState {
 
         Ok(MarkdownState {
             base_dir,
+            template,
             tracked_files,
             is_directory_mode,
             change_tx,
@@ -287,6 +300,7 @@ async fn handle_file_event(event: Event, state: &SharedMarkdownState) {
 /// - File watcher cannot watch the base directory
 pub fn new_router(
     base_dir: PathBuf,
+    template: Template,
     tracked_files: Vec<PathBuf>,
     is_directory_mode: bool,
 ) -> Result<Router> {
@@ -294,6 +308,7 @@ pub fn new_router(
 
     let state = Arc::new(Mutex::new(MarkdownState::new(
         base_dir.clone(),
+        template,
         tracked_files,
         is_directory_mode,
     )?));
@@ -345,11 +360,17 @@ pub async fn serve_markdown(
     is_directory_mode: bool,
     hostname: impl AsRef<str>,
     port: u16,
+    template: Template,
 ) -> Result<()> {
     let hostname = hostname.as_ref();
 
     let first_file = tracked_files.first().cloned();
-    let router = new_router(base_dir.clone(), tracked_files, is_directory_mode)?;
+    let router = new_router(
+        base_dir.clone(),
+        template.clone(),
+        tracked_files,
+        is_directory_mode,
+    )?;
 
     let listener = TcpListener::bind((hostname, port)).await?;
 
@@ -361,8 +382,15 @@ pub async fn serve_markdown(
         println!("📄 Serving markdown file: {}", file_path.display());
     }
 
-    println!("🌐 Server running at: http://{listen_addr}");
+    println!(
+        "🌐 Server running at: http://{}",
+        string_colored(listen_addr)
+    );
     println!("⚡ Live reload enabled");
+    println!(
+        "🍥 Using template {}",
+        string_colored(template.as_ref().to_uppercase())
+    );
     println!("\nPress Ctrl+C to stop the server");
 
     axum::serve(listener, router).await?;
@@ -421,7 +449,8 @@ async fn serve_file(
 
 async fn render_markdown(state: &MarkdownState, current_file: &str) -> (StatusCode, Html<String>) {
     let env = template_env();
-    let template = match env.get_template(TEMPLATE_NAME) {
+
+    let template = match env.get_template(&format!("{}.html", state.template.as_ref())) {
         Ok(t) => t,
         Err(e) => {
             return (
