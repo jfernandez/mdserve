@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
 
-use mdserve::{scan_markdown_files, serve_markdown};
+use mdserve::{scan_markdown_files, serve_markdown, Template};
 
 #[derive(Parser)]
 #[command(name = "mdserve")]
@@ -19,6 +19,10 @@ struct Args {
     /// Port to serve on
     #[arg(short, long, default_value = "3000")]
     port: u16,
+
+    /// HTML template for markdown preview
+    #[arg(short, long, default_value = "classic")]
+    template: Template,
 }
 
 #[tokio::main]
@@ -52,6 +56,7 @@ async fn main() -> Result<()> {
         is_directory_mode,
         args.hostname,
         args.port,
+        args.template,
     )
     .await?;
 

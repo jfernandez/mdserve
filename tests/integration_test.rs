@@ -1,5 +1,5 @@
 use axum_test::TestServer;
-use mdserve::{new_router, scan_markdown_files, ServerMessage};
+use mdserve::{new_router, scan_markdown_files, ServerMessage, Template};
 use std::fs;
 use std::time::Duration;
 use tempfile::{tempdir, Builder, NamedTempFile, TempDir};
@@ -13,7 +13,13 @@ const TEST_FILE_3_CONTENT: &str = "# Test 3\n\nContent of test3";
 const YAML_FRONTMATTER_CONTENT: &str = "---\ntitle: Test Post\nauthor: Name\n---\n\n# Test Post\n";
 const TOML_FRONTMATTER_CONTENT: &str = "+++\ntitle = \"Test Post\"\n+++\n\n# Test Post\n";
 
-fn create_test_server_impl(content: &str, use_http: bool) -> (TestServer, NamedTempFile) {
+fn create_test_server_impl(
+    content: &str,
+    use_http: bool,
+    template: Option<Template>,
+) -> (TestServer, NamedTempFile) {
+    let template = template.unwrap_or(Template::Classic);
+
     let temp_file = Builder::new()
         .suffix(".md")
         .tempfile()
@@ -32,8 +38,8 @@ fn create_test_server_impl(content: &str, use_http: bool) -> (TestServer, NamedT
     let tracked_files = vec![canonical_path];
     let is_directory_mode = false;
 
-    let router =
-        new_router(base_dir, tracked_files, is_directory_mode).expect("Failed to create router");
+    let router = new_router(base_dir, template, tracked_files, is_directory_mode)
+        .expect("Failed to create router");
 
     let server = if use_http {
         TestServer::builder()
@@ -48,11 +54,18 @@ fn create_test_server_impl(content: &str, use_http: bool) -> (TestServer, NamedT
 }
 
 async fn create_test_server(content: &str) -> (TestServer, NamedTempFile) {
-    create_test_server_impl(content, false)
+    create_test_server_impl(content, false, None)
 }
 
 async fn create_test_server_with_http(content: &str) -> (TestServer, NamedTempFile) {
-    create_test_server_impl(content, true)
+    create_test_server_impl(content, true, None)
+}
+
+async fn create_test_server_with_template(
+    content: &str,
+    template: Template,
+) -> (TestServer, NamedTempFile) {
+    create_test_server_impl(content, true, Some(template))
 }
 
 fn create_directory_server_impl(use_http: bool) -> (TestServer, TempDir) {
@@ -69,8 +82,13 @@ fn create_directory_server_impl(use_http: bool) -> (TestServer, TempDir) {
     let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan markdown files");
     let is_directory_mode = true;
 
-    let router =
-        new_router(base_dir, tracked_files, is_directory_mode).expect("Failed to create router");
+    let router = new_router(
+        base_dir,
+        Template::Classic,
+        tracked_files,
+        is_directory_mode,
+    )
+    .expect("Failed to create router");
 
     let server = if use_http {
         TestServer::builder()
@@ -234,8 +252,13 @@ async fn test_image_serving() {
     let base_dir = temp_dir.path().to_path_buf();
     let tracked_files = vec![md_path];
     let is_directory_mode = false;
-    let router =
-        new_router(base_dir, tracked_files, is_directory_mode).expect("Failed to create router");
+    let router = new_router(
+        base_dir,
+        Template::Classic,
+        tracked_files,
+        is_directory_mode,
+    )
+    .expect("Failed to create router");
     let server = TestServer::new(router).expect("Failed to create test server");
 
     // Test that markdown includes img tag
@@ -271,8 +294,13 @@ async fn test_non_image_files_not_served() {
     let base_dir = temp_dir.path().to_path_buf();
     let tracked_files = vec![md_path];
     let is_directory_mode = false;
-    let router =
-        new_router(base_dir, tracked_files, is_directory_mode).expect("Failed to create router");
+    let router = new_router(
+        base_dir,
+        Template::Classic,
+        tracked_files,
+        is_directory_mode,
+    )
+    .expect("Failed to create router");
     let server = TestServer::new(router).expect("Failed to create test server");
 
     // Test that non-image files return 404
@@ -581,6 +609,8 @@ async fn test_directory_mode_active_file_highlighting() {
     let response1 = server.get("/test1.md").await;
     assert_eq!(response1.status_code(), 200);
     let body1 = response1.text();
+
+    println!("{body1:#}");
 
     // Verify test1.md link has active class on the same line
     assert!(
@@ -1027,4 +1057,38 @@ async fn test_temp_file_rename_triggers_reload_directory_mode() {
         !final_body.contains("Content of test1"),
         "Should not serve old content"
     );
+}
+
+#[tokio::test]
+async fn test_template() {
+    let template_classic = Template::Classic;
+    let template_cv = Template::Cv;
+
+    // First test template set to the classic
+    let (server, _temp_file) = create_test_server_with_template(
+        "# Hello World\n\nThis is **bold** text.",
+        template_classic,
+    )
+    .await;
+
+    let response = server.get("/").await;
+
+    assert_eq!(response.status_code(), 200);
+    let body = response.text();
+
+    // Check template id (classic)
+    assert!(body.contains(&format!("id=\"{}\"", template_classic.as_ref())));
+
+    // Second test template set to the cv
+    let (server, _temp_file) =
+        create_test_server_with_template("# Hello World\n\nThis is **bold** text.", template_cv)
+            .await;
+
+    let response = server.get("/").await;
+
+    assert_eq!(response.status_code(), 200);
+    let body = response.text();
+
+    // Check template id (cv)
+    assert!(body.contains(&format!("id=\"{}\"", template_cv.as_ref())));
 }

@@ -81,6 +81,10 @@ mdserve docs/ -p 8080
 
 # Serve on custom hostname and port
 mdserve README.md --hostname 0.0.0.0 --port 8080
+
+# Serve with specific template
+mdserve examples/tesla.md --template classic
+mdserve examples/tesla.md --template cv
 ```
 
 ### Single-File vs Directory Mode
