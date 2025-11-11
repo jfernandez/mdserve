@@ -180,7 +180,16 @@ impl MarkdownState {
         let html_body = markdown::to_html_with_options(content, &options)
             .unwrap_or_else(|_| "Error parsing markdown".to_string());
 
-        Ok(html_body)
+        // Wrap tables in div for horizontal scrolling
+        let html_with_wrapped_tables = Self::wrap_tables_for_scroll(&html_body);
+
+        Ok(html_with_wrapped_tables)
+    }
+
+    fn wrap_tables_for_scroll(html: &str) -> String {
+        // Simple regex replacement to wrap <table> tags
+        html.replace("<table>", "<div class=\"table-wrapper\"><table>")
+            .replace("</table>", "</table></div>")
     }
 }
 

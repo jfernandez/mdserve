@@ -59,7 +59,7 @@
             --table-header-bg: #f6f8fa;
             --sidebar-width: 250px;
             --sidebar-collapsed-width: 48px;
-            --content-max-width: 900px;
+            --content-max-width: 100%;
             --transition-speed: 0.3s;
             --transition-timing: ease;
         }
@@ -133,6 +133,7 @@
             max-width: none;
             min-height: 100vh;
             overflow-x: hidden; /* Prevent horizontal scroll during transitions */
+            overflow-y: auto; /* Ensure vertical scrolling works */
         }
 
         /* Sidebar */
@@ -209,17 +210,20 @@
 
         /* Main Content Area */
         #content {
-            /* Center content in remaining space while avoiding sidebar overlap */
-            margin-left: max(var(--sidebar-width), calc((100vw - var(--content-max-width)) / 2));
-            margin-right: auto;
-            max-width: var(--content-max-width);
-            padding: 20px;
+            /* Full-width content with small margins */
+            margin-left: var(--sidebar-width);
+            margin-right: 0;
+            max-width: none;
+            width: calc(100% - var(--sidebar-width));
+            padding: 40px 60px;
             min-height: 100vh;
-            transition: margin-left var(--transition-speed) var(--transition-timing);
+            transition: margin-left var(--transition-speed) var(--transition-timing),
+                        width var(--transition-speed) var(--transition-timing);
         }
 
         body.sidebar-collapsed #content {
-            margin-left: max(var(--sidebar-collapsed-width), calc((100vw - var(--content-max-width)) / 2));
+            margin-left: var(--sidebar-collapsed-width);
+            width: calc(100% - var(--sidebar-collapsed-width));
         }
 
         /* Sidebar Toggle Button */
@@ -424,15 +428,21 @@
             margin-left: 0;
             color: var(--blockquote-color);
         }
+        /* Table wrapper for horizontal scroll */
+        .table-wrapper {
+            overflow-x: auto;
+            margin: 16px 0;
+        }
         table {
             border-collapse: collapse;
-            width: 100%;
-            margin: 16px 0;
+            width: auto;
+            margin: 0;
         }
         th, td {
             border: 1px solid var(--border-color-light);
             padding: 8px 12px;
             text-align: left;
+            vertical-align: top;
         }
         th {
             background-color: var(--table-header-bg);
