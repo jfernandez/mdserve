@@ -59,7 +59,7 @@
             --table-header-bg: #f6f8fa;
             --sidebar-width: 250px;
             --sidebar-collapsed-width: 48px;
-            --content-max-width: 900px;
+            --content-max-width: 100%;
             --transition-speed: 0.3s;
             --transition-timing: ease;
         }
@@ -152,6 +152,10 @@
                         background var(--transition-speed) var(--transition-timing);
         }
 
+        .sidebar.resizing {
+            transition: none;
+        }
+
         body.sidebar-collapsed .sidebar {
             width: var(--sidebar-collapsed-width);
             min-width: var(--sidebar-collapsed-width);
@@ -221,6 +225,10 @@
             transition: margin-left var(--transition-speed) var(--transition-timing);
         }
 
+        #content.resizing {
+            transition: none;
+        }
+
         body.sidebar-collapsed #content {
             margin-left: max(var(--sidebar-collapsed-width), calc((100vw - var(--content-max-width)) / 2));
         }
@@ -278,10 +286,6 @@
 
         body.sidebar-collapsed .sidebar-resize-handle {
             display: none;
-        }
-
-        .sidebar.resizing {
-            transition: none;
         }
         {% else %}
         /* Single-file layout */
@@ -525,17 +529,57 @@
             });
         }
 
+        // Helper function to set sidebar and content dimensions
+        function setSidebarWidth(width) {
+            const sidebar = document.querySelector('.sidebar');
+            const content = document.getElementById('content');
+            if (sidebar && content) {
+                sidebar.style.width = width + 'px';
+                sidebar.style.minWidth = width + 'px';
+                content.style.marginLeft = width + 'px';
+                content.style.width = `calc(100% - ${width}px)`;
+            }
+        }
+
         // Sidebar toggle management
+        let isToggling = false;
         function toggleSidebar() {
-            document.body.classList.toggle('sidebar-collapsed');
+            // Prevent rapid clicking glitches
+            if (isToggling) return;
+            isToggling = true;
+
+            const sidebar = document.querySelector('.sidebar');
+            const content = document.getElementById('content');
             const isCollapsed = document.body.classList.contains('sidebar-collapsed');
-            localStorage.setItem('sidebar-collapsed', isCollapsed ? 'true' : 'false');
+
+            if (!isCollapsed) {
+                // Collapsing: save current width and set to collapsed width
+                const currentWidth = sidebar.offsetWidth;
+                localStorage.setItem('sidebarWidthBeforeCollapse', currentWidth.toString());
+                setSidebarWidth(48);
+            } else {
+                // Expanding: restore previous width
+                const savedWidth = localStorage.getItem('sidebarWidthBeforeCollapse') ||
+                                   localStorage.getItem('sidebarWidth') || '250';
+                const width = parseInt(savedWidth);
+                setSidebarWidth(width);
+            }
+
+            document.body.classList.toggle('sidebar-collapsed');
+            const newCollapsedState = document.body.classList.contains('sidebar-collapsed');
+            localStorage.setItem('sidebar-collapsed', newCollapsedState ? 'true' : 'false');
+
+            // Allow toggling again after transition completes (300ms)
+            setTimeout(() => {
+                isToggling = false;
+            }, 300);
         }
 
         function initSidebar() {
             const isCollapsed = localStorage.getItem('sidebar-collapsed') === 'true';
             if (isCollapsed) {
                 document.body.classList.add('sidebar-collapsed');
+                setSidebarWidth(48);
             }
         }
 
@@ -558,6 +602,7 @@
                 startWidth = sidebar.offsetWidth;
                 resizeHandle.classList.add('resizing');
                 sidebar.classList.add('resizing');
+                content.classList.add('resizing');
                 document.body.style.cursor = 'ew-resize';
                 document.body.style.userSelect = 'none';
                 e.preventDefault();
@@ -580,21 +625,26 @@
                     isResizing = false;
                     resizeHandle.classList.remove('resizing');
                     sidebar.classList.remove('resizing');
+                    content.classList.remove('resizing');
                     document.body.style.cursor = '';
                     document.body.style.userSelect = '';
 
+                    // Save the exact width to localStorage
                     localStorage.setItem('sidebarWidth', currentWidth.toString());
                 }
             });
 
-            // Restore saved width on load
-            const savedWidth = localStorage.getItem('sidebarWidth');
-            if (savedWidth) {
-                const width = parseInt(savedWidth);
-                sidebar.style.width = width + 'px';
-                sidebar.style.minWidth = width + 'px';
-                content.style.marginLeft = width + 'px';
-                content.style.width = `calc(100% - ${width}px)`;
+            // Restore saved width on load (only if not collapsed)
+            const isCollapsed = localStorage.getItem('sidebar-collapsed') === 'true';
+            if (!isCollapsed) {
+                const savedWidth = localStorage.getItem('sidebarWidth');
+                if (savedWidth) {
+                    const width = parseInt(savedWidth);
+                    sidebar.style.width = width + 'px';
+                    sidebar.style.minWidth = width + 'px';
+                    content.style.marginLeft = width + 'px';
+                    content.style.width = `calc(100% - ${width}px)`;
+                }
             }
         }
 
