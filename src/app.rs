@@ -88,6 +88,7 @@ struct TrackedFile {
     path: PathBuf,
     last_modified: SystemTime,
     html: String,
+    content_hash: md5::Digest,
 }
 
 struct MarkdownState {
@@ -107,6 +108,7 @@ impl MarkdownState {
             let last_modified = metadata.modified()?;
             let content = fs::read_to_string(&file_path)?;
             let html = Self::markdown_to_html(&content)?;
+            let content_hash = md5::compute(&content);
 
             let filename = file_path.file_name().unwrap().to_string_lossy().to_string();
 
@@ -116,6 +118,7 @@ impl MarkdownState {
                     path: file_path,
                     last_modified,
                     html,
+                    content_hash,
                 },
             );
         }
@@ -162,6 +165,7 @@ impl MarkdownState {
 
         let metadata = fs::metadata(&file_path)?;
         let content = fs::read_to_string(&file_path)?;
+        let content_hash = md5::compute(&content);
 
         self.tracked_files.insert(
             filename,
@@ -169,6 +173,7 @@ impl MarkdownState {
                 path: file_path,
                 last_modified: metadata.modified()?,
                 html: Self::markdown_to_html(&content)?,
+                content_hash,
             },
         );
 
@@ -227,6 +232,7 @@ impl MarkdownState {
             let Ok(last_modified) = metadata.modified() else {
                 continue;
             };
+            let content_hash = md5::compute(&content);
 
             self.tracked_files.insert(
                 filename,
@@ -234,6 +240,7 @@ impl MarkdownState {
                     path: file_path,
                     last_modified,
                     html,
+                    content_hash,
                 },
             );
         }
@@ -289,16 +296,26 @@ enum FileChangeType {
 fn detect_file_change(
     old_files: &std::collections::HashSet<String>,
     new_files: &std::collections::HashSet<String>,
+    old_tracked_files: &HashMap<String, md5::Digest>,
+    new_tracked_files: &HashMap<String, TrackedFile>,
 ) -> FileChangeType {
     let added: Vec<_> = new_files.difference(old_files).collect();
     let removed: Vec<_> = old_files.difference(new_files).collect();
 
-    // Detect rename: exactly one file added and one removed
+    // Detect rename: exactly one file added and one removed with matching content hashes
     if let ([new_name], [old_name]) = (added.as_slice(), removed.as_slice()) {
-        return FileChangeType::Renamed {
-            old_name: (*old_name).clone(),
-            new_name: (*new_name).clone(),
-        };
+        // Verify content is the same by comparing hashes
+        if let (Some(old_hash), Some(new_file)) = (
+            old_tracked_files.get(*old_name),
+            new_tracked_files.get(*new_name),
+        ) {
+            if *old_hash == new_file.content_hash {
+                return FileChangeType::Renamed {
+                    old_name: (*old_name).clone(),
+                    new_name: (*new_name).clone(),
+                };
+            }
+        }
     }
 
     // Detect removal: at least one file removed
@@ -327,9 +344,15 @@ fn send_change_message(
 }
 
 async fn rescan_and_detect_changes(state: &SharedMarkdownState) {
-    let old_files = {
+    let (old_files, old_hashes) = {
         let guard = state.lock().await;
-        guard.tracked_files.keys().cloned().collect()
+        let files = guard.tracked_files.keys().cloned().collect();
+        let hashes: HashMap<String, md5::Digest> = guard
+            .tracked_files
+            .iter()
+            .map(|(k, v)| (k.clone(), v.content_hash))
+            .collect();
+        (files, hashes)
     };
 
     let mut guard = state.lock().await;
@@ -345,7 +368,7 @@ async fn rescan_and_detect_changes(state: &SharedMarkdownState) {
     let new_files: std::collections::HashSet<String> =
         guard.tracked_files.keys().cloned().collect();
 
-    let change_type = detect_file_change(&old_files, &new_files);
+    let change_type = detect_file_change(&old_files, &new_files, &old_hashes, &guard.tracked_files);
     send_change_message(change_type, &guard.change_tx);
 }
 

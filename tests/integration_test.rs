@@ -1373,3 +1373,57 @@ async fn test_remove_currently_displayed_file_redirects_to_home() {
     let after_response = server.get("/test2.markdown").await;
     assert_eq!(after_response.status_code(), 404);
 }
+
+#[tokio::test]
+async fn test_remove_and_create_different_files_does_not_trigger_rename() {
+    // Test that removing one file and creating a different file with different content
+    // does NOT trigger a FileRenamed message (should be generic Reload)
+    let (server, temp_dir) = create_directory_server_with_http().await;
+
+    let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
+
+    // Load test2.markdown initially
+    let initial_response = server.get("/test2.markdown").await;
+    assert_eq!(initial_response.status_code(), 200);
+
+    // ATOMICALLY remove test2.markdown and create a completely different file
+    // We do both operations together to ensure the file watcher sees them as one change
+    let removed_path = temp_dir.path().join("test2.markdown");
+    let new_path = temp_dir.path().join("new-file.md");
+
+    fs::remove_file(&removed_path).expect("Failed to remove file");
+    fs::write(&new_path, "# Completely Different Content\n\nThis is a new file with different content.")
+        .expect("Failed to create new file");
+
+    // Wait for file watcher to detect changes
+    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+    // Should receive a generic Reload message (NOT FileRenamed)
+    let update_result = tokio::time::timeout(
+        Duration::from_secs(WEBSOCKET_TIMEOUT_SECS),
+        websocket.receive_json::<ServerMessage>(),
+    )
+    .await;
+
+    assert!(
+        update_result.is_ok(),
+        "Should receive message after file changes"
+    );
+
+    let message = update_result.unwrap();
+    // Print the message for debugging
+    println!("Received message: {:?}", message);
+
+    match message {
+        ServerMessage::Reload => {
+            // This is correct - different files should trigger generic reload
+        }
+        ServerMessage::FileRenamed { old_name, new_name } => {
+            panic!(
+                "BUG: Should NOT treat removal of '{}' and creation of '{}' as rename (different content)",
+                old_name, new_name
+            );
+        }
+        _ => panic!("Expected Reload message, got {:?}", message),
+    }
+}
