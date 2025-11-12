@@ -54,6 +54,8 @@ pub enum ClientMessage {
 pub enum ServerMessage {
     Reload,
     Pong,
+    FileRenamed { old_name: String, new_name: String },
+    FileRemoved { name: String },
 }
 
 use std::collections::HashMap;
@@ -278,14 +280,73 @@ async fn handle_markdown_file_change(path: &Path, state: &SharedMarkdownState) {
     }
 }
 
-async fn rescan_and_reload(state: &SharedMarkdownState) {
+enum FileChangeType {
+    Renamed { old_name: String, new_name: String },
+    Removed { name: String },
+    Other,
+}
+
+fn detect_file_change(
+    old_files: &std::collections::HashSet<String>,
+    new_files: &std::collections::HashSet<String>,
+) -> FileChangeType {
+    let added: Vec<_> = new_files.difference(old_files).collect();
+    let removed: Vec<_> = old_files.difference(new_files).collect();
+
+    // Detect rename: exactly one file added and one removed
+    if let ([new_name], [old_name]) = (added.as_slice(), removed.as_slice()) {
+        return FileChangeType::Renamed {
+            old_name: (*old_name).clone(),
+            new_name: (*new_name).clone(),
+        };
+    }
+
+    // Detect removal: at least one file removed
+    if let Some(&first_removed) = removed.first() {
+        return FileChangeType::Removed {
+            name: first_removed.clone(),
+        };
+    }
+
+    FileChangeType::Other
+}
+
+fn send_change_message(
+    change_type: FileChangeType,
+    tx: &broadcast::Sender<ServerMessage>,
+) {
+    let message = match change_type {
+        FileChangeType::Renamed { old_name, new_name } => {
+            ServerMessage::FileRenamed { old_name, new_name }
+        }
+        FileChangeType::Removed { name } => ServerMessage::FileRemoved { name },
+        FileChangeType::Other => ServerMessage::Reload,
+    };
+
+    let _ = tx.send(message);
+}
+
+async fn rescan_and_detect_changes(state: &SharedMarkdownState) {
+    let old_files = {
+        let guard = state.lock().await;
+        guard.tracked_files.keys().cloned().collect()
+    };
+
     let mut guard = state.lock().await;
+
     let Ok(changed) = guard.rescan_directory() else {
         return;
     };
-    if changed {
-        let _ = guard.change_tx.send(ServerMessage::Reload);
+
+    if !changed {
+        return;
     }
+
+    let new_files: std::collections::HashSet<String> =
+        guard.tracked_files.keys().cloned().collect();
+
+    let change_type = detect_file_change(&old_files, &new_files);
+    send_change_message(change_type, &guard.change_tx);
 }
 
 /// Schedules a delayed rescan for directory mode to handle editor save sequences.
@@ -294,7 +355,7 @@ fn schedule_delayed_rescan(state: &SharedMarkdownState) {
     let state_clone = state.clone();
     tokio::spawn(async move {
         tokio::time::sleep(tokio::time::Duration::from_millis(RESCAN_DELAY_MS)).await;
-        rescan_and_reload(&state_clone).await;
+        rescan_and_detect_changes(&state_clone).await;
     });
 }
 
@@ -335,7 +396,7 @@ async fn handle_md_create_or_modify(path: &Path, state: &SharedMarkdownState) {
     handle_markdown_file_change(path, state).await;
 }
 
-async fn handle_md_remove(state: &SharedMarkdownState) {
+async fn handle_md_remove(_path: &Path, state: &SharedMarkdownState) {
     let is_dir_mode = state.lock().await.is_directory_mode;
     if !is_dir_mode {
         return;
@@ -365,7 +426,7 @@ async fn handle_file_event(event: Event, state: &SharedMarkdownState) {
                             handle_md_create_or_modify(path, state).await;
                         }
                         Remove(_) => {
-                            handle_md_remove(state).await;
+                            handle_md_remove(path, state).await;
                         }
                         _ => {}
                     }

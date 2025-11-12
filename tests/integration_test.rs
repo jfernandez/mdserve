@@ -1281,3 +1281,95 @@ async fn test_directory_mode_file_rename_preserves_content() {
         "Content should be preserved after rename"
     );
 }
+
+#[tokio::test]
+async fn test_rename_currently_displayed_file_redirects_to_new_name() {
+    // Test that renaming the currently displayed file sends a redirect message
+    let (server, temp_dir) = create_directory_server_with_http().await;
+
+    let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
+
+    // Load test2.markdown initially
+    let initial_response = server.get("/test2.markdown").await;
+    assert_eq!(initial_response.status_code(), 200);
+    let initial_body = initial_response.text();
+    assert!(initial_body.contains("Test 2"));
+
+    // Rename the currently displayed file
+    let old_path = temp_dir.path().join("test2.markdown");
+    let new_path = temp_dir.path().join("test2-renamed.md");
+    fs::rename(&old_path, &new_path).expect("Failed to rename file");
+
+    // Wait for file watcher to detect rename
+    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+    // Should receive a FileRenamed message with old and new filenames
+    let update_result = tokio::time::timeout(
+        Duration::from_secs(WEBSOCKET_TIMEOUT_SECS),
+        websocket.receive_json::<ServerMessage>(),
+    )
+    .await;
+
+    assert!(
+        update_result.is_ok(),
+        "Should receive message after file rename"
+    );
+
+    let message = update_result.unwrap();
+    match message {
+        ServerMessage::FileRenamed { old_name, new_name } => {
+            assert_eq!(old_name, "test2.markdown");
+            assert_eq!(new_name, "test2-renamed.md");
+        }
+        _ => panic!("Expected FileRenamed message, got {:?}", message),
+    }
+
+    // Verify new file is accessible
+    let after_response = server.get("/test2-renamed.md").await;
+    assert_eq!(after_response.status_code(), 200);
+}
+
+#[tokio::test]
+async fn test_remove_currently_displayed_file_redirects_to_home() {
+    // Test that removing the currently displayed file sends a redirect message
+    let (server, temp_dir) = create_directory_server_with_http().await;
+
+    let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
+
+    // Load test2.markdown initially
+    let initial_response = server.get("/test2.markdown").await;
+    assert_eq!(initial_response.status_code(), 200);
+    let initial_body = initial_response.text();
+    assert!(initial_body.contains("Test 2"));
+
+    // Remove the currently displayed file
+    let file_path = temp_dir.path().join("test2.markdown");
+    fs::remove_file(&file_path).expect("Failed to remove file");
+
+    // Wait for file watcher to detect removal
+    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+    // Should receive a FileRemoved message with the removed filename
+    let update_result = tokio::time::timeout(
+        Duration::from_secs(WEBSOCKET_TIMEOUT_SECS),
+        websocket.receive_json::<ServerMessage>(),
+    )
+    .await;
+
+    assert!(
+        update_result.is_ok(),
+        "Should receive message after file removal"
+    );
+
+    let message = update_result.unwrap();
+    match message {
+        ServerMessage::FileRemoved { name } => {
+            assert_eq!(name, "test2.markdown");
+        }
+        _ => panic!("Expected FileRemoved message, got {:?}", message),
+    }
+
+    // Verify removed file returns 404
+    let after_response = server.get("/test2.markdown").await;
+    assert_eq!(after_response.status_code(), 404);
+}
