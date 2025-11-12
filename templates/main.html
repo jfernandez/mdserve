@@ -193,6 +193,9 @@
             border-radius: 6px;
             transition: background 0.2s var(--transition-timing);
             font-size: 14px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         .file-list a:hover,
@@ -253,6 +256,32 @@
         body.sidebar-collapsed .sidebar-toggle {
             left: 4px;
             cursor: e-resize;
+        }
+
+        /* Sidebar Resize Handle */
+        .sidebar-resize-handle {
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 4px;
+            height: 100%;
+            cursor: ew-resize;
+            background: transparent;
+            transition: background 0.2s;
+            z-index: 103;
+        }
+
+        .sidebar-resize-handle:hover,
+        .sidebar-resize-handle.resizing {
+            background: var(--link-color);
+        }
+
+        body.sidebar-collapsed .sidebar-resize-handle {
+            display: none;
+        }
+
+        .sidebar.resizing {
+            transition: none;
         }
         {% else %}
         /* Single-file layout */
@@ -510,6 +539,65 @@
             }
         }
 
+        // Sidebar resize functionality
+        function initSidebarResize() {
+            const resizeHandle = document.querySelector('.sidebar-resize-handle');
+            const sidebar = document.querySelector('.sidebar');
+            const content = document.getElementById('content');
+
+            if (!resizeHandle || !sidebar || !content) return;
+
+            let isResizing = false;
+            let startX = 0;
+            let startWidth = 0;
+            let currentWidth = 0;
+
+            resizeHandle.addEventListener('mousedown', function(e) {
+                isResizing = true;
+                startX = e.clientX;
+                startWidth = sidebar.offsetWidth;
+                resizeHandle.classList.add('resizing');
+                sidebar.classList.add('resizing');
+                document.body.style.cursor = 'ew-resize';
+                document.body.style.userSelect = 'none';
+                e.preventDefault();
+            });
+
+            document.addEventListener('mousemove', function(e) {
+                if (!isResizing) return;
+
+                const delta = e.clientX - startX;
+                currentWidth = Math.max(150, Math.min(600, startWidth + delta));
+
+                sidebar.style.width = currentWidth + 'px';
+                sidebar.style.minWidth = currentWidth + 'px';
+                content.style.marginLeft = currentWidth + 'px';
+                content.style.width = `calc(100% - ${currentWidth}px)`;
+            });
+
+            document.addEventListener('mouseup', function() {
+                if (isResizing) {
+                    isResizing = false;
+                    resizeHandle.classList.remove('resizing');
+                    sidebar.classList.remove('resizing');
+                    document.body.style.cursor = '';
+                    document.body.style.userSelect = '';
+
+                    localStorage.setItem('sidebarWidth', currentWidth.toString());
+                }
+            });
+
+            // Restore saved width on load
+            const savedWidth = localStorage.getItem('sidebarWidth');
+            if (savedWidth) {
+                const width = parseInt(savedWidth);
+                sidebar.style.width = width + 'px';
+                sidebar.style.minWidth = width + 'px';
+                content.style.marginLeft = width + 'px';
+                content.style.width = `calc(100% - ${width}px)`;
+            }
+        }
+
         // Mermaid theme management
         function getMermaidTheme() {
             const currentTheme = document.documentElement.getAttribute('data-theme');
@@ -637,6 +725,7 @@
         document.addEventListener('DOMContentLoaded', function() {
             initTheme();
             initSidebar();
+            initSidebarResize();
             initMermaid();
             setupLiveReload();
 
@@ -680,6 +769,7 @@
             {% endfor %}
         </ul>
     </div>
+    <div class="sidebar-resize-handle"></div>
 </nav>
 {% endif %}
 
