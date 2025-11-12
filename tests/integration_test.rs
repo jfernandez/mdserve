@@ -1751,3 +1751,48 @@ async fn test_remove_all_files_from_nested_folder() {
     assert!(!html.contains("data-folder-path=\"docs/tutorials\"") && !html.contains("data-folder-path=\"docs\\tutorials\""), "Empty nested folder should not appear");
     assert!(html.contains("intro.md"), "Parent folder file should still be accessible");
 }
+
+#[tokio::test]
+async fn test_physically_removing_entire_folder() {
+    // Test that physically removing an entire folder from filesystem makes it disappear
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+
+    // Create structure: root.md, docs/file1.md, docs/file2.md
+    fs::write(temp_dir.path().join("root.md"), "# Root").expect("Failed to write root.md");
+
+    let docs = temp_dir.path().join("docs");
+    fs::create_dir(&docs).expect("Failed to create docs folder");
+    fs::write(docs.join("file1.md"), "# File 1").expect("Failed to write file1.md");
+    fs::write(docs.join("file2.md"), "# File 2").expect("Failed to write file2.md");
+
+    let base_dir = temp_dir.path().to_path_buf();
+    let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan");
+
+    let router = new_router(base_dir, tracked_files, true).expect("Failed to create router");
+    let server = TestServer::builder()
+        .http_transport()
+        .build(router)
+        .expect("Failed to create test server");
+
+    let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
+
+    // Physically remove the entire folder
+    fs::remove_dir_all(&docs).expect("Failed to remove docs folder");
+
+    // Wait for reload signal
+    let _ = tokio::time::timeout(
+        Duration::from_secs(WEBSOCKET_TIMEOUT_SECS),
+        websocket.receive_json::<ServerMessage>(),
+    )
+    .await;
+
+    // Verify folder no longer appears in sidebar
+    let response = server.get("/root.md").await;
+    assert_eq!(response.status_code(), 200);
+    let html = response.text();
+    assert!(!html.contains("data-folder-path=\"docs\""), "Physically removed folder should not appear in sidebar");
+
+    // Files from removed folder should return 404
+    let removed_file_response = server.get("/docs/file1.md").await;
+    assert_eq!(removed_file_response.status_code(), 404, "Files from removed folder should return 404");
+}
