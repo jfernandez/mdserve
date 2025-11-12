@@ -1796,3 +1796,95 @@ async fn test_physically_removing_entire_folder() {
     let removed_file_response = server.get("/docs/file1.md").await;
     assert_eq!(removed_file_response.status_code(), 404, "Files from removed folder should return 404");
 }
+
+// ===========================
+// Root Route Tests
+// ===========================
+
+#[tokio::test]
+async fn test_root_route_shows_first_file_alphabetically() {
+    // Test that root route (/) shows first file in alphabetical order
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+
+    // Create files in non-alphabetical order to verify sorting
+    fs::write(temp_dir.path().join("zebra.md"), "# Zebra").expect("Failed to write zebra.md");
+    fs::write(temp_dir.path().join("apple.md"), "# Apple").expect("Failed to write apple.md");
+    fs::write(temp_dir.path().join("middle.md"), "# Middle").expect("Failed to write middle.md");
+
+    let base_dir = temp_dir.path().to_path_buf();
+    let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan");
+
+    let router = new_router(base_dir, tracked_files, true).expect("Failed to create router");
+    let server = TestServer::new(router).expect("Failed to create test server");
+
+    // Access root route
+    let response = server.get("/").await;
+    assert_eq!(response.status_code(), 200);
+    let html = response.text();
+
+    // Should display "apple.md" content (first alphabetically)
+    assert!(html.contains("<h1>Apple</h1>"), "Root route should show first file alphabetically (apple.md)");
+    assert!(!html.contains("<h1>Zebra</h1>"), "Root route should not show zebra.md");
+    assert!(!html.contains("<h1>Middle</h1>"), "Root route should not show middle.md");
+}
+
+#[tokio::test]
+async fn test_root_route_with_nested_folders_shows_first_file() {
+    // Test that root route respects folder structure in alphabetical sorting
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+
+    // Create structure where first file alphabetically is in a folder
+    // Structure: docs/aaa.md, root-zebra.md
+    // Alphabetically: "docs/aaa.md" < "root-zebra.md"
+
+    let docs = temp_dir.path().join("docs");
+    fs::create_dir(&docs).expect("Failed to create docs folder");
+    fs::write(docs.join("aaa.md"), "# AAA in Docs").expect("Failed to write aaa.md");
+
+    fs::write(temp_dir.path().join("root-zebra.md"), "# Root Zebra").expect("Failed to write root-zebra.md");
+
+    let base_dir = temp_dir.path().to_path_buf();
+    let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan");
+
+    let router = new_router(base_dir, tracked_files, true).expect("Failed to create router");
+    let server = TestServer::new(router).expect("Failed to create test server");
+
+    // Access root route
+    let response = server.get("/").await;
+    assert_eq!(response.status_code(), 200);
+    let html = response.text();
+
+    // Should display docs/aaa.md content (first alphabetically when folders are considered)
+    assert!(html.contains("<h1>AAA in Docs</h1>"), "Root route should show first file from docs folder");
+    assert!(!html.contains("<h1>Root Zebra</h1>"), "Root route should not show root-zebra.md");
+}
+
+#[tokio::test]
+async fn test_root_route_with_only_nested_files() {
+    // Test root route when there are NO root-level files, only nested ones
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+
+    // Create only nested files (no root-level .md files)
+    let folder1 = temp_dir.path().join("folder1");
+    fs::create_dir(&folder1).expect("Failed to create folder1");
+    fs::write(folder1.join("zzz.md"), "# ZZZ").expect("Failed to write zzz.md");
+
+    let folder2 = temp_dir.path().join("folder2");
+    fs::create_dir(&folder2).expect("Failed to create folder2");
+    fs::write(folder2.join("aaa.md"), "# AAA in Folder2").expect("Failed to write aaa.md");
+
+    let base_dir = temp_dir.path().to_path_buf();
+    let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan");
+
+    let router = new_router(base_dir, tracked_files, true).expect("Failed to create router");
+    let server = TestServer::new(router).expect("Failed to create test server");
+
+    // Access root route
+    let response = server.get("/").await;
+    assert_eq!(response.status_code(), 200);
+    let html = response.text();
+
+    // Should display folder1/zzz.md (folder1 < folder2 alphabetically)
+    assert!(html.contains("<h1>ZZZ</h1>"), "Root route should show first file from first folder alphabetically");
+    assert!(!html.contains("<h1>AAA in Folder2</h1>"), "Root route should not show file from folder2");
+}
