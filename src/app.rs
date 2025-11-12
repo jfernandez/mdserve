@@ -62,19 +62,25 @@ use std::collections::HashMap;
 
 pub fn scan_markdown_files(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut md_files = Vec::new();
+    scan_markdown_files_recursive(dir, &mut md_files)?;
+    md_files.sort();
+    Ok(md_files)
+}
 
+fn scan_markdown_files_recursive(dir: &Path, md_files: &mut Vec<PathBuf>) -> Result<()> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
 
         if path.is_file() && is_markdown_file(&path) {
             md_files.push(path);
+        } else if path.is_dir() {
+            // Recursively scan subdirectories
+            scan_markdown_files_recursive(&path, md_files)?;
         }
     }
 
-    md_files.sort();
-
-    Ok(md_files)
+    Ok(())
 }
 
 fn is_markdown_file(path: &Path) -> bool {
@@ -86,9 +92,20 @@ fn is_markdown_file(path: &Path) -> bool {
 
 struct TrackedFile {
     path: PathBuf,
+    #[allow(dead_code)]  // Will be used for folder removal and root route handling
+    relative_path: String,  // Path relative to base_dir (e.g., "folder/file.md")
     last_modified: SystemTime,
     html: String,
     content_hash: md5::Digest,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct FileTreeNode {
+    name: String,           // Display name (e.g., "intro.md" or "docs")
+    path: String,           // Relative path (e.g., "docs/intro.md" or "docs")
+    is_folder: bool,        // true if this is a folder, false if file
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    children: Vec<FileTreeNode>,  // Child nodes (files and subfolders)
 }
 
 struct MarkdownState {
@@ -110,12 +127,20 @@ impl MarkdownState {
             let html = Self::markdown_to_html(&content)?;
             let content_hash = md5::compute(&content);
 
-            let filename = file_path.file_name().unwrap().to_string_lossy().to_string();
+            // Calculate relative path from base_dir
+            // Canonicalize the file path to ensure consistent comparison
+            let canonical_path = file_path.canonicalize()?;
+            let relative_path = canonical_path
+                .strip_prefix(&base_dir)
+                .map_err(|_| anyhow::anyhow!("File path is not within base directory"))?
+                .to_string_lossy()
+                .to_string();
 
             tracked_files.insert(
-                filename,
+                relative_path.clone(),
                 TrackedFile {
                     path: file_path,
+                    relative_path,
                     last_modified,
                     html,
                     content_hash,
@@ -141,8 +166,126 @@ impl MarkdownState {
         filenames
     }
 
-    fn refresh_file(&mut self, filename: &str) -> Result<()> {
-        if let Some(tracked) = self.tracked_files.get_mut(filename) {
+    fn get_file_tree(&self) -> Vec<FileTreeNode> {
+        use std::collections::BTreeMap;
+
+        // Get all file paths sorted
+        let filenames = self.get_sorted_filenames();
+
+        // Build tree structure using a nested map approach
+        let mut root_files = Vec::new();
+        let mut folders: BTreeMap<String, Vec<FileTreeNode>> = BTreeMap::new();
+
+        for file_path in filenames {
+            // Normalize path separators to forward slash for consistency
+            let normalized_path = file_path.replace('\\', "/");
+            let parts: Vec<&str> = normalized_path.split('/').collect();
+
+            if parts.len() == 1 {
+                // Root level file
+                root_files.push(FileTreeNode {
+                    name: parts[0].to_string(),
+                    path: normalized_path.clone(),
+                    is_folder: false,
+                    children: Vec::new(),
+                });
+            } else {
+                // File in a folder - build folder path incrementally
+                for i in 0..parts.len() - 1 {
+                    let folder_parts = &parts[0..=i];
+                    let folder_path = folder_parts.join("/");
+
+                    // Ensure this folder exists in our map
+                    folders.entry(folder_path.clone()).or_default();
+                }
+
+                // Add file to its parent folder
+                let parent_folder = parts[0..parts.len() - 1].join("/");
+                let file_node = FileTreeNode {
+                    name: parts[parts.len() - 1].to_string(),
+                    path: normalized_path,
+                    is_folder: false,
+                    children: Vec::new(),
+                };
+
+                folders
+                    .get_mut(&parent_folder)
+                    .unwrap()
+                    .push(file_node);
+            }
+        }
+
+        // Build folder tree recursively
+        fn build_folder_nodes(
+            folder_path: &str,
+            folders: &BTreeMap<String, Vec<FileTreeNode>>,
+        ) -> FileTreeNode {
+            let name = folder_path.split('/').next_back().unwrap_or(folder_path).to_string();
+            let mut children = Vec::new();
+
+            // Add files in this folder
+            if let Some(files) = folders.get(folder_path) {
+                children.extend(files.clone());
+            }
+
+            // Add subfolders
+            let folder_prefix = format!("{}/", folder_path);
+            for (sub_folder_path, _) in folders.iter() {
+                if sub_folder_path.starts_with(&folder_prefix) {
+                    // Check if this is a direct child (not a deeper descendant)
+                    let remaining = &sub_folder_path[folder_prefix.len()..];
+                    if !remaining.contains('/') {
+                        let subfolder_node = build_folder_nodes(sub_folder_path, folders);
+                        children.push(subfolder_node);
+                    }
+                }
+            }
+
+            // Sort children: folders first, then files, both alphabetically
+            children.sort_by(|a, b| {
+                match (a.is_folder, b.is_folder) {
+                    (true, false) => std::cmp::Ordering::Less,
+                    (false, true) => std::cmp::Ordering::Greater,
+                    _ => a.name.cmp(&b.name),
+                }
+            });
+
+            FileTreeNode {
+                name,
+                path: folder_path.to_string(),
+                is_folder: true,
+                children,
+            }
+        }
+
+        // Build root-level folder nodes
+        let mut result = Vec::new();
+
+        // Add root-level folders
+        for (folder_path, _) in folders.iter() {
+            // Only process top-level folders (no '/' in path)
+            if !folder_path.contains('/') {
+                result.push(build_folder_nodes(folder_path, &folders));
+            }
+        }
+
+        // Add root-level files
+        result.extend(root_files);
+
+        // Sort result: folders first, then files, both alphabetically
+        result.sort_by(|a, b| {
+            match (a.is_folder, b.is_folder) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => a.name.cmp(&b.name),
+            }
+        });
+
+        result
+    }
+
+    fn refresh_file(&mut self, relative_path: &str) -> Result<()> {
+        if let Some(tracked) = self.tracked_files.get_mut(relative_path) {
             let metadata = fs::metadata(&tracked.path)?;
             let current_modified = metadata.modified()?;
 
@@ -157,9 +300,16 @@ impl MarkdownState {
     }
 
     fn add_tracked_file(&mut self, file_path: PathBuf) -> Result<()> {
-        let filename = file_path.file_name().unwrap().to_string_lossy().to_string();
+        // Calculate relative path from base_dir
+        // Canonicalize the file path to ensure consistent comparison
+        let canonical_path = file_path.canonicalize()?;
+        let relative_path = canonical_path
+            .strip_prefix(&self.base_dir)
+            .map_err(|_| anyhow::anyhow!("File path is not within base directory"))?
+            .to_string_lossy()
+            .to_string();
 
-        if self.tracked_files.contains_key(&filename) {
+        if self.tracked_files.contains_key(&relative_path) {
             return Ok(());
         }
 
@@ -168,9 +318,10 @@ impl MarkdownState {
         let content_hash = md5::compute(&content);
 
         self.tracked_files.insert(
-            filename,
+            relative_path.clone(),
             TrackedFile {
                 path: file_path,
+                relative_path,
                 last_modified: metadata.modified()?,
                 html: Self::markdown_to_html(&content)?,
                 content_hash,
@@ -189,33 +340,42 @@ impl MarkdownState {
 
         // Get current files in directory
         let current_files = scan_markdown_files(&self.base_dir)?;
-        let current_filenames: std::collections::HashSet<String> = current_files
+        let current_relative_paths: std::collections::HashSet<String> = current_files
             .iter()
-            .filter_map(|p| p.file_name())
-            .map(|n| n.to_string_lossy().to_string())
+            .filter_map(|p| {
+                p.canonicalize().ok().and_then(|canonical| {
+                    canonical
+                        .strip_prefix(&self.base_dir)
+                        .ok()
+                        .map(|rel| rel.to_string_lossy().to_string())
+                })
+            })
             .collect();
 
-        // Track filenames that are currently tracked
-        let tracked_filenames: std::collections::HashSet<String> =
+        // Track relative paths that are currently tracked
+        let tracked_relative_paths: std::collections::HashSet<String> =
             self.tracked_files.keys().cloned().collect();
 
         // Check if there are any differences
-        if current_filenames == tracked_filenames {
+        if current_relative_paths == tracked_relative_paths {
             return Ok(false);
         }
 
         // Remove files that no longer exist
         self.tracked_files
-            .retain(|filename, _| current_filenames.contains(filename));
+            .retain(|relative_path, _| current_relative_paths.contains(relative_path));
 
         // Add new files
         for file_path in current_files {
-            let Some(filename) = file_path.file_name() else {
+            let Ok(canonical_path) = file_path.canonicalize() else {
                 continue;
             };
-            let filename = filename.to_string_lossy().to_string();
+            let Ok(rel_path) = canonical_path.strip_prefix(&self.base_dir) else {
+                continue;
+            };
+            let relative_path = rel_path.to_string_lossy().to_string();
 
-            if self.tracked_files.contains_key(&filename) {
+            if self.tracked_files.contains_key(&relative_path) {
                 continue;
             }
 
@@ -235,9 +395,10 @@ impl MarkdownState {
             let content_hash = md5::compute(&content);
 
             self.tracked_files.insert(
-                filename,
+                relative_path.clone(),
                 TrackedFile {
                     path: file_path,
+                    relative_path,
                     last_modified,
                     html,
                     content_hash,
@@ -267,16 +428,20 @@ async fn handle_markdown_file_change(path: &Path, state: &SharedMarkdownState) {
         return;
     }
 
-    let filename = path.file_name().and_then(|n| n.to_str()).map(String::from);
-    let Some(filename) = filename else {
-        return;
-    };
-
     let mut state_guard = state.lock().await;
 
+    // Calculate relative path from base_dir
+    let Ok(canonical_path) = path.canonicalize() else {
+        return;
+    };
+    let Ok(rel_path) = canonical_path.strip_prefix(&state_guard.base_dir) else {
+        return;
+    };
+    let relative_path = rel_path.to_string_lossy().to_string();
+
     // If file is already tracked, refresh its content
-    if state_guard.tracked_files.contains_key(&filename) {
-        if state_guard.refresh_file(&filename).is_ok() {
+    if state_guard.tracked_files.contains_key(&relative_path) {
+        if state_guard.refresh_file(&relative_path).is_ok() {
             let _ = state_guard.change_tx.send(ServerMessage::Reload);
         }
     } else if state_guard.is_directory_mode {
@@ -500,7 +665,8 @@ pub fn new_router(
         Config::default(),
     )?;
 
-    watcher.watch(&base_dir, RecursiveMode::NonRecursive)?;
+    // Watch recursively to detect file changes in subdirectories
+    watcher.watch(&base_dir, RecursiveMode::Recursive)?;
 
     tokio::spawn(async move {
         let _watcher = watcher;
@@ -512,8 +678,9 @@ pub fn new_router(
     let router = Router::new()
         .route("/", get(serve_html_root))
         .route("/ws", get(websocket_handler))
+        .route("/__health", get(server_health))
         .route("/mermaid.min.js", get(serve_mermaid_js))
-        .route("/:filename", get(serve_file))
+        .route("/*path", get(serve_file))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
@@ -572,7 +739,7 @@ fn format_host(hostname: &str, port: u16) -> String {
 async fn serve_html_root(State(state): State<SharedMarkdownState>) -> impl IntoResponse {
     let mut state = state.lock().await;
 
-    let filename = match state.get_sorted_filenames().into_iter().next() {
+    let relative_path = match state.get_sorted_filenames().into_iter().next() {
         Some(name) => name,
         None => {
             return (
@@ -582,28 +749,31 @@ async fn serve_html_root(State(state): State<SharedMarkdownState>) -> impl IntoR
         }
     };
 
-    let _ = state.refresh_file(&filename);
+    let _ = state.refresh_file(&relative_path);
 
-    render_markdown(&state, &filename).await
+    render_markdown(&state, &relative_path).await
 }
 
 async fn serve_file(
-    AxumPath(filename): AxumPath<String>,
+    AxumPath(path): AxumPath<String>,
     State(state): State<SharedMarkdownState>,
 ) -> axum::response::Response {
-    if filename.ends_with(".md") || filename.ends_with(".markdown") {
+    // Strip leading slash from path (/*path includes it)
+    let relative_path = path.strip_prefix('/').unwrap_or(&path);
+
+    if relative_path.ends_with(".md") || relative_path.ends_with(".markdown") {
         let mut state = state.lock().await;
 
-        if !state.tracked_files.contains_key(&filename) {
+        if !state.tracked_files.contains_key(relative_path) {
             return (StatusCode::NOT_FOUND, Html("File not found".to_string())).into_response();
         }
 
-        let _ = state.refresh_file(&filename);
+        let _ = state.refresh_file(relative_path);
 
-        let (status, html) = render_markdown(&state, &filename).await;
+        let (status, html) = render_markdown(&state, relative_path).await;
         (status, html).into_response()
-    } else if is_image_file(&filename) {
-        serve_static_file_inner(filename, state).await
+    } else if is_image_file(relative_path) {
+        serve_static_file_inner(relative_path.to_string(), state).await
     } else {
         (StatusCode::NOT_FOUND, Html("File not found".to_string())).into_response()
     }
@@ -630,17 +800,8 @@ async fn render_markdown(state: &MarkdownState, current_file: &str) -> (StatusCo
     };
 
     let rendered = if state.show_navigation() {
-        let filenames = state.get_sorted_filenames();
-        let files: Vec<Value> = filenames
-            .iter()
-            .map(|name| {
-                Value::from_object({
-                    let mut map = std::collections::HashMap::new();
-                    map.insert("name".to_string(), Value::from(name.clone()));
-                    map
-                })
-            })
-            .collect();
+        let file_tree = state.get_file_tree();
+        let files = Value::from_serialize(&file_tree);
 
         match template.render(context! {
             content => content,
@@ -682,6 +843,10 @@ async fn serve_mermaid_js(headers: HeaderMap) -> impl IntoResponse {
     }
 
     mermaid_response(StatusCode::OK, Some(MERMAID_JS))
+}
+
+async fn server_health() -> impl IntoResponse {
+    (StatusCode::OK, "ready")
 }
 
 fn is_etag_match(headers: &HeaderMap) -> bool {
@@ -933,7 +1098,7 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_markdown_files_ignores_subdirectories() {
+    fn test_scan_markdown_files_scans_subdirectories_recursively() {
         let temp_dir = tempdir().expect("Failed to create temp dir");
 
         fs::write(temp_dir.path().join("root.md"), "# Root").expect("Failed to write");
@@ -944,8 +1109,93 @@ mod tests {
 
         let result = scan_markdown_files(temp_dir.path()).expect("Failed to scan");
 
+        assert_eq!(result.len(), 2);
+        let filenames: Vec<_> = result
+            .iter()
+            .map(|p| p.strip_prefix(temp_dir.path()).unwrap().to_str().unwrap())
+            .collect();
+
+        assert!(filenames.contains(&"root.md"));
+        assert!(filenames.contains(&"subdir/nested.md") || filenames.contains(&"subdir\\nested.md"));
+    }
+
+    #[test]
+    fn test_scan_markdown_files_with_nested_folders() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+
+        // Create: root.md, folder1/file1.md, folder1/folder2/file2.md, folder3/file3.md
+        fs::write(temp_dir.path().join("root.md"), "# Root").expect("Failed to write");
+
+        let folder1 = temp_dir.path().join("folder1");
+        fs::create_dir(&folder1).expect("Failed to create folder1");
+        fs::write(folder1.join("file1.md"), "# File 1").expect("Failed to write");
+
+        let folder2 = folder1.join("folder2");
+        fs::create_dir(&folder2).expect("Failed to create folder2");
+        fs::write(folder2.join("file2.md"), "# File 2").expect("Failed to write");
+
+        let folder3 = temp_dir.path().join("folder3");
+        fs::create_dir(&folder3).expect("Failed to create folder3");
+        fs::write(folder3.join("file3.md"), "# File 3").expect("Failed to write");
+
+        let result = scan_markdown_files(temp_dir.path()).expect("Failed to scan");
+
+        assert_eq!(result.len(), 4);
+    }
+
+    #[test]
+    fn test_scan_markdown_files_ignores_empty_folders() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+
+        fs::write(temp_dir.path().join("root.md"), "# Root").expect("Failed to write");
+
+        // Create empty folder
+        let empty_folder = temp_dir.path().join("empty");
+        fs::create_dir(&empty_folder).expect("Failed to create empty folder");
+
+        // Create folder with non-markdown files only
+        let non_md_folder = temp_dir.path().join("non_md");
+        fs::create_dir(&non_md_folder).expect("Failed to create non_md folder");
+        fs::write(non_md_folder.join("file.txt"), "Text file").expect("Failed to write");
+
+        let result = scan_markdown_files(temp_dir.path()).expect("Failed to scan");
+
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].file_name().unwrap().to_str().unwrap(), "root.md");
+    }
+
+    #[test]
+    fn test_scan_markdown_files_handles_filename_conflicts() {
+        // Test that files with the same name in different folders are both tracked
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+
+        // Create file.md in root
+        fs::write(temp_dir.path().join("file.md"), "# Root File").expect("Failed to write");
+
+        // Create file.md in folder1
+        let folder1 = temp_dir.path().join("folder1");
+        fs::create_dir(&folder1).expect("Failed to create folder1");
+        fs::write(folder1.join("file.md"), "# Folder1 File").expect("Failed to write");
+
+        // Create file.md in folder2
+        let folder2 = temp_dir.path().join("folder2");
+        fs::create_dir(&folder2).expect("Failed to create folder2");
+        fs::write(folder2.join("file.md"), "# Folder2 File").expect("Failed to write");
+
+        let result = scan_markdown_files(temp_dir.path()).expect("Failed to scan");
+
+        // Should find all 3 files with the same name
+        assert_eq!(result.len(), 3);
+
+        // Verify we can distinguish between them by their paths
+        let paths: Vec<_> = result
+            .iter()
+            .map(|p| p.strip_prefix(temp_dir.path()).unwrap().to_str().unwrap())
+            .collect();
+
+        assert!(paths.contains(&"file.md"));
+        assert!(paths.contains(&"folder1/file.md") || paths.contains(&"folder1\\file.md"));
+        assert!(paths.contains(&"folder2/file.md") || paths.contains(&"folder2\\file.md"));
     }
 
     #[test]
@@ -972,5 +1222,62 @@ mod tests {
 
         assert_eq!(format_host("::1", 3000), "[::1]:3000");
         assert_eq!(format_host("2001:db8::1", 8080), "[2001:db8::1]:8080");
+    }
+
+    #[tokio::test]
+    async fn test_file_watcher_detects_new_files_in_subdirectories() {
+        use axum_test::TestServer;
+        use std::time::Duration;
+        use tokio::time::{sleep, timeout};
+
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+
+        // Create initial file that will be tracked
+        fs::write(temp_dir.path().join("initial.md"), "# Initial").expect("Failed to write initial.md");
+
+        // Start the server with directory mode
+        let router = new_router(
+            temp_dir.path().to_path_buf(),
+            vec![],
+            true,
+        ).expect("Failed to create router");
+
+        let server = TestServer::new(router).expect("Failed to create test server");
+
+        // Poll until server is ready using the lightweight health endpoint.
+        let poll_result = timeout(Duration::from_secs(2), async {
+            loop {
+                let response = server.get("/__health").await;
+                if response.status_code() == 200 {
+                    break;
+                }
+                sleep(Duration::from_millis(10)).await;
+            }
+        }).await;
+        assert!(poll_result.is_ok(), "Server should be ready within 2 seconds");
+
+        // Create a new subdirectory after the server has started
+        let subfolder = temp_dir.path().join("subfolder");
+        fs::create_dir(&subfolder).expect("Failed to create subfolder");
+
+        // Create a new file in the subdirectory
+        fs::write(subfolder.join("new.md"), "# New File").expect("Failed to write new.md");
+
+        // Poll until the new file is detected and accessible by the file watcher
+        let poll_result = timeout(Duration::from_secs(3), async {
+            loop {
+                let response = server.get("/subfolder/new.md").await;
+                if response.status_code() == 200 {
+                    break;
+                }
+                sleep(Duration::from_millis(50)).await;
+            }
+        }).await;
+        assert!(poll_result.is_ok(), "File watcher should detect new files in subdirectories within 3 seconds");
+
+        // Verify the file list includes the new file
+        let response = server.get("/").await;
+        let body = response.text();
+        assert!(body.contains("new.md"), "Navigation should include the new file from subdirectory");
     }
 }

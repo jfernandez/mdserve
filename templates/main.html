@@ -181,13 +181,78 @@
             margin: 0;
         }
 
-        .file-list li {
-            margin-bottom: 4px;
+        .file-list ul {
+            list-style: none;
+            padding-left: 20px;
+            margin: 0;
         }
 
-        .file-list a {
-            display: block;
-            padding: 8px 12px;
+        /* Folder Items */
+        .folder-item {
+            margin-bottom: 2px;
+        }
+
+        .folder-header {
+            display: flex;
+            align-items: center;
+            padding: 6px 8px;
+            cursor: pointer;
+            border-radius: 6px;
+            transition: background 0.2s var(--transition-timing);
+            user-select: none;
+        }
+
+        .folder-header:hover {
+            background: var(--border-color-light);
+        }
+
+        .folder-arrow {
+            width: 16px;
+            height: 16px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.2s var(--transition-timing);
+            font-size: 10px;
+            margin-right: 4px;
+        }
+
+        .folder-item.expanded > .folder-header > .folder-arrow {
+            transform: rotate(90deg);
+        }
+
+        .folder-icon,
+        .file-icon {
+            margin-right: 6px;
+            font-size: 14px;
+        }
+
+        .folder-name {
+            font-size: 14px;
+            color: var(--text-color);
+            font-weight: 500;
+        }
+
+        /* Folder Children */
+        .folder-children {
+            overflow: hidden;
+            max-height: 0;
+            transition: max-height 0.3s var(--transition-timing);
+        }
+
+        .folder-item.expanded > .folder-children {
+            max-height: 2000px;
+        }
+
+        /* File Items */
+        .file-item {
+            margin-bottom: 2px;
+        }
+
+        .file-item a {
+            display: flex;
+            align-items: center;
+            padding: 6px 8px;
             color: var(--text-color);
             text-decoration: none;
             border-radius: 6px;
@@ -195,16 +260,20 @@
             font-size: 14px;
         }
 
-        .file-list a:hover,
-        .file-list a:focus-visible {
+        .file-item a:hover,
+        .file-item a:focus-visible {
             background: var(--border-color-light);
             outline: none;
         }
 
-        .file-list a.active {
+        .file-item a.active {
             background: var(--border-color-light);
             color: var(--text-color);
             font-weight: 600;
+        }
+
+        .file-name {
+            color: var(--text-color);
         }
 
         /* Main Content Area */
@@ -693,11 +762,56 @@
             };
         }
 
+        // Folder toggle management
+        function initFolderToggle() {
+            const folderHeaders = document.querySelectorAll('.folder-header');
+
+            folderHeaders.forEach(header => {
+                header.addEventListener('click', function(event) {
+                    // Stop event from bubbling to parent folders
+                    event.stopPropagation();
+
+                    const folderItem = this.parentElement;
+                    const folderPath = folderItem.getAttribute('data-folder-path');
+
+                    // Toggle expanded class
+                    folderItem.classList.toggle('expanded');
+
+                    // Store expanded state in localStorage
+                    const isExpanded = folderItem.classList.contains('expanded');
+                    if (isExpanded) {
+                        localStorage.setItem(`folder-${folderPath}`, 'expanded');
+                    } else {
+                        localStorage.removeItem(`folder-${folderPath}`);
+                    }
+                });
+            });
+
+            // Restore expanded state from localStorage and expand parents of active file
+            const folderItems = document.querySelectorAll('.folder-item');
+            const activeFile = document.querySelector('.file-item a.active');
+
+            folderItems.forEach(item => {
+                const folderPath = item.getAttribute('data-folder-path');
+
+                // Restore from localStorage
+                if (localStorage.getItem(`folder-${folderPath}`) === 'expanded') {
+                    item.classList.add('expanded');
+                }
+
+                // Auto-expand if contains active file
+                if (activeFile && item.contains(activeFile)) {
+                    item.classList.add('expanded');
+                }
+            });
+        }
+
         // Initialize theme and live reload on page load
         document.addEventListener('DOMContentLoaded', function() {
             initTheme();
             initSidebar();
             initMermaid();
+            initFolderToggle();
             setupLiveReload();
 
             // Modal close functionality
@@ -730,13 +844,33 @@
 <nav class="sidebar">
     <div class="sidebar-header"></div>
     <div class="sidebar-content">
+        {% macro render_tree_node(node, depth=0) %}
+            {% if node.is_folder %}
+                <li class="folder-item" data-folder-path="{{ node.path }}">
+                    <div class="folder-header">
+                        <span class="folder-arrow">▶</span>
+                        <span class="folder-icon">📁</span>
+                        <span class="folder-name">{{ node.name }}</span>
+                    </div>
+                    <ul class="folder-children">
+                        {% for child in node.children %}
+                            {{ render_tree_node(child, depth + 1) }}
+                        {% endfor %}
+                    </ul>
+                </li>
+            {% else %}
+                <li class="file-item">
+                    <a href="/{{ node.path }}"{% if node.path == current_file %} class="active"{% endif %}>
+                        <span class="file-icon">📄</span>
+                        <span class="file-name">{{ node.name }}</span>
+                    </a>
+                </li>
+            {% endif %}
+        {% endmacro %}
+
         <ul class="file-list">
-            {% for file in files %}
-            <li>
-                <a href="/{{ file.name }}"{% if file.name == current_file %} class="active"{% endif %}>
-                    {{ file.name }}
-                </a>
-            </li>
+            {% for node in files %}
+                {{ render_tree_node(node, 0) }}
             {% endfor %}
         </ul>
     </div>

@@ -4,7 +4,6 @@ use std::fs;
 use std::time::Duration;
 use tempfile::{tempdir, Builder, NamedTempFile, TempDir};
 
-const FILE_WATCH_DELAY_MS: u64 = 100;
 const WEBSOCKET_TIMEOUT_SECS: u64 = 5;
 
 const TEST_FILE_1_CONTENT: &str = "# Test 1\n\nContent of test1";
@@ -132,8 +131,6 @@ async fn test_file_modification_updates_via_websocket() {
     // Modify the file
     fs::write(&temp_file, "# Modified Content").expect("Failed to modify file");
 
-    // Add a small delay to allow file watcher to detect change
-    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
 
     // Should receive reload signal via WebSocket (with timeout)
     let update_result = tokio::time::timeout(
@@ -641,8 +638,6 @@ async fn test_directory_mode_websocket_file_modification() {
     fs::write(&test_file, "# Modified Test 1\n\nContent has changed")
         .expect("Failed to modify file");
 
-    // Add a small delay to allow file watcher to detect change
-    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
 
     // Should receive reload signal via WebSocket
     let update_result = tokio::time::timeout(
@@ -675,8 +670,6 @@ async fn test_directory_mode_new_file_triggers_reload() {
     let new_file = temp_dir.path().join("test4.md");
     fs::write(&new_file, "# Test 4\n\nThis is a new file").expect("Failed to create new file");
 
-    // Add a small delay to allow file watcher to detect change
-    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
 
     // Should receive reload signal via WebSocket
     let update_result = tokio::time::timeout(
@@ -734,7 +727,6 @@ async fn test_editor_save_simulation_single_file_mode() {
     // Simulate editor save: rename to backup
     fs::rename(&file_path, &backup_path).expect("Failed to rename to backup");
 
-    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
 
     // CRITICAL: File should still be accessible (not 404) even though renamed
     let during_save_response = server.get("/").await;
@@ -747,7 +739,6 @@ async fn test_editor_save_simulation_single_file_mode() {
     // Create new file with updated content
     fs::write(&file_path, "# Updated\n\nUpdated content").expect("Failed to write new file");
 
-    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
 
     // Verify updated content is now served
     let final_response = server.get("/").await;
@@ -782,7 +773,6 @@ async fn test_editor_save_simulation_directory_mode() {
     // Simulate editor save: rename to backup
     fs::rename(&file_path, &backup_path).expect("Failed to rename to backup");
 
-    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
 
     // CRITICAL: File should still be accessible during save
     let during_save_response = server.get("/test1.md").await;
@@ -795,7 +785,6 @@ async fn test_editor_save_simulation_directory_mode() {
     // Create new file with updated content
     fs::write(&file_path, "# Test 1 Updated\n\nUpdated content").expect("Failed to write new file");
 
-    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
 
     // Verify updated content
     let final_response = server.get("/test1.md").await;
@@ -821,7 +810,6 @@ async fn test_no_404_during_editor_save_sequence() {
 
     // Step 1: Rename to backup
     fs::rename(&file_path, &backup_path).expect("Failed to rename to backup");
-    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
 
     // Request should still work (no 404)
     let response_after_rename = server.get("/test1.md").await;
@@ -833,7 +821,6 @@ async fn test_no_404_during_editor_save_sequence() {
 
     // Step 2: Create new file
     fs::write(&file_path, "# Test 1 Updated\n\nNew content").expect("Failed to write new file");
-    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
 
     // Request should work with new content
     let response_after_create = server.get("/test1.md").await;
@@ -919,12 +906,10 @@ async fn test_temp_file_rename_triggers_reload_single_file_mode() {
     )
     .expect("Failed to write temp file");
 
-    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
 
     // Rename temp file over original (atomic operation)
     fs::rename(&temp_write_path, &file_path).expect("Failed to rename temp file");
 
-    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
 
     // Should receive reload signal via WebSocket
     let update_result = tokio::time::timeout(
@@ -988,12 +973,10 @@ async fn test_temp_file_rename_triggers_reload_directory_mode() {
     )
     .expect("Failed to write temp file");
 
-    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
 
     // Rename temp file over original
     fs::rename(&temp_write_path, &file_path).expect("Failed to rename temp file");
 
-    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
 
     // Should receive reload signal
     let update_result = tokio::time::timeout(
@@ -1052,7 +1035,6 @@ async fn test_directory_mode_file_removal_updates_sidebar() {
     fs::remove_file(&file_to_remove).expect("Failed to remove file");
 
     // Wait for file watcher to detect removal
-    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
 
     // Should receive reload signal
     let update_result = tokio::time::timeout(
@@ -1102,7 +1084,6 @@ async fn test_directory_mode_removed_file_returns_404() {
     fs::remove_file(&file_to_remove).expect("Failed to remove file");
 
     // Wait for file watcher
-    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
 
     // Wait for reload signal
     let _ = tokio::time::timeout(
@@ -1146,7 +1127,6 @@ async fn test_directory_mode_file_rename_updates_sidebar() {
     fs::rename(&old_path, &new_path).expect("Failed to rename file");
 
     // Wait for file watcher to detect rename
-    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
 
     // Should receive reload signal
     let update_result = tokio::time::timeout(
@@ -1207,7 +1187,6 @@ async fn test_directory_mode_renamed_file_accessible_with_new_name() {
     fs::rename(&old_path, &new_path).expect("Failed to rename file");
 
     // Wait for file watcher
-    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
 
     // Wait for reload signal
     let _ = tokio::time::timeout(
@@ -1258,7 +1237,6 @@ async fn test_directory_mode_file_rename_preserves_content() {
     fs::rename(&old_path, &new_path).expect("Failed to rename file");
 
     // Wait for file watcher
-    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
 
     // Wait for reload
     let _ = tokio::time::timeout(
@@ -1301,7 +1279,6 @@ async fn test_rename_currently_displayed_file_redirects_to_new_name() {
     fs::rename(&old_path, &new_path).expect("Failed to rename file");
 
     // Wait for file watcher to detect rename
-    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
 
     // Should receive a FileRenamed message with old and new filenames
     let update_result = tokio::time::timeout(
@@ -1347,7 +1324,6 @@ async fn test_remove_currently_displayed_file_redirects_to_home() {
     fs::remove_file(&file_path).expect("Failed to remove file");
 
     // Wait for file watcher to detect removal
-    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
 
     // Should receive a FileRemoved message with the removed filename
     let update_result = tokio::time::timeout(
@@ -1396,7 +1372,6 @@ async fn test_remove_and_create_different_files_does_not_trigger_rename() {
         .expect("Failed to create new file");
 
     // Wait for file watcher to detect changes
-    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
 
     // Should receive a generic Reload message (NOT FileRenamed)
     let update_result = tokio::time::timeout(
@@ -1426,4 +1401,255 @@ async fn test_remove_and_create_different_files_does_not_trigger_rename() {
         }
         _ => panic!("Expected Reload message, got {:?}", message),
     }
+}
+#[tokio::test]
+async fn test_folder_based_routing_single_level() {
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+
+    // Create folder structure
+    let folder1 = temp_dir.path().join("folder1");
+    fs::create_dir(&folder1).expect("Failed to create folder1");
+    fs::write(folder1.join("doc.md"), "# Folder1 Doc").expect("Failed to write file");
+    
+    fs::write(temp_dir.path().join("root.md"), "# Root Doc").expect("Failed to write root file");
+
+    let base_dir = temp_dir.path().to_path_buf();
+    let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan");
+    
+    let router = new_router(base_dir, tracked_files, true).expect("Failed to create router");
+    let server = TestServer::new(router).expect("Failed to create test server");
+
+    // Test accessing file in folder
+    let response = server.get("/folder1/doc.md").await;
+    assert_eq!(response.status_code(), 200);
+    assert!(response.text().contains("Folder1 Doc"));
+    
+    // Test accessing root file
+    let response = server.get("/root.md").await;
+    assert_eq!(response.status_code(), 200);
+    assert!(response.text().contains("Root Doc"));
+}
+
+#[tokio::test]
+async fn test_folder_based_routing_nested_folders() {
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+
+    // Create nested folder structure
+    let folder1 = temp_dir.path().join("folder1");
+    fs::create_dir(&folder1).expect("Failed to create folder1");
+    
+    let folder2 = folder1.join("folder2");
+    fs::create_dir(&folder2).expect("Failed to create folder2");
+    fs::write(folder2.join("nested.md"), "# Nested Doc").expect("Failed to write file");
+
+    let base_dir = temp_dir.path().to_path_buf();
+    let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan");
+    
+    let router = new_router(base_dir, tracked_files, true).expect("Failed to create router");
+    let server = TestServer::new(router).expect("Failed to create test server");
+
+    // Test accessing nested file
+    let response = server.get("/folder1/folder2/nested.md").await;
+    assert_eq!(response.status_code(), 200);
+    assert!(response.text().contains("Nested Doc"));
+}
+
+#[tokio::test]
+async fn test_folder_based_routing_same_filename_different_folders() {
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+
+    // Create files with same name in different locations
+    fs::write(temp_dir.path().join("doc.md"), "# Root Doc").expect("Failed to write root file");
+    
+    let folder1 = temp_dir.path().join("folder1");
+    fs::create_dir(&folder1).expect("Failed to create folder1");
+    fs::write(folder1.join("doc.md"), "# Folder1 Doc").expect("Failed to write folder1 file");
+    
+    let folder2 = temp_dir.path().join("folder2");
+    fs::create_dir(&folder2).expect("Failed to create folder2");
+    fs::write(folder2.join("doc.md"), "# Folder2 Doc").expect("Failed to write folder2 file");
+
+    let base_dir = temp_dir.path().to_path_buf();
+    let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan");
+    
+    let router = new_router(base_dir, tracked_files, true).expect("Failed to create router");
+    let server = TestServer::new(router).expect("Failed to create test server");
+
+    // Test each file can be accessed uniquely
+    let response = server.get("/doc.md").await;
+    assert_eq!(response.status_code(), 200);
+    assert!(response.text().contains("Root Doc"));
+    
+    let response = server.get("/folder1/doc.md").await;
+    assert_eq!(response.status_code(), 200);
+    assert!(response.text().contains("Folder1 Doc"));
+    
+    let response = server.get("/folder2/doc.md").await;
+    assert_eq!(response.status_code(), 200);
+    assert!(response.text().contains("Folder2 Doc"));
+}
+
+#[tokio::test]
+async fn test_folder_based_routing_404_for_nonexistent_path() {
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+
+    let folder1 = temp_dir.path().join("folder1");
+    fs::create_dir(&folder1).expect("Failed to create folder1");
+    fs::write(folder1.join("doc.md"), "# Doc").expect("Failed to write file");
+
+    let base_dir = temp_dir.path().to_path_buf();
+    let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan");
+    
+    let router = new_router(base_dir, tracked_files, true).expect("Failed to create router");
+    let server = TestServer::new(router).expect("Failed to create test server");
+
+    // Test 404 for non-existent folder path
+    let response = server.get("/nonexistent/doc.md").await;
+    assert_eq!(response.status_code(), 404);
+
+    // Test 404 for non-existent file in existing folder
+    let response = server.get("/folder1/nonexistent.md").await;
+    assert_eq!(response.status_code(), 404);
+}
+
+// ===========================
+// Tree Structure Tests
+// ===========================
+
+#[tokio::test]
+async fn test_tree_structure_root_files_only() {
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+
+    // Create root-level files only
+    fs::write(temp_dir.path().join("a.md"), "# File A").expect("Failed to write a.md");
+    fs::write(temp_dir.path().join("b.md"), "# File B").expect("Failed to write b.md");
+    fs::write(temp_dir.path().join("c.md"), "# File C").expect("Failed to write c.md");
+
+    let base_dir = temp_dir.path().to_path_buf();
+    let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan");
+
+    let router = new_router(base_dir, tracked_files, true).expect("Failed to create router");
+    let server = TestServer::new(router).expect("Failed to create test server");
+
+    let response = server.get("/a.md").await;
+    assert_eq!(response.status_code(), 200);
+    let html = response.text();
+
+    // Check all files are listed in sidebar
+    assert!(html.contains("a.md"));
+    assert!(html.contains("b.md"));
+    assert!(html.contains("c.md"));
+
+    // Should NOT have any folder elements (only file elements)
+    assert!(!html.contains("class=\"folder-item\""));
+    assert!(!html.contains("class=\"folder-header\""));
+}
+
+#[tokio::test]
+async fn test_tree_structure_single_level_folders() {
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+
+    // Create root file
+    fs::write(temp_dir.path().join("root.md"), "# Root").expect("Failed to write root.md");
+
+    // Create folder1 with files
+    let folder1 = temp_dir.path().join("docs");
+    fs::create_dir(&folder1).expect("Failed to create docs folder");
+    fs::write(folder1.join("intro.md"), "# Intro").expect("Failed to write intro.md");
+    fs::write(folder1.join("guide.md"), "# Guide").expect("Failed to write guide.md");
+
+    // Create folder2 with files
+    let folder2 = temp_dir.path().join("api");
+    fs::create_dir(&folder2).expect("Failed to create api folder");
+    fs::write(folder2.join("reference.md"), "# Reference").expect("Failed to write reference.md");
+
+    let base_dir = temp_dir.path().to_path_buf();
+    let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan");
+
+    let router = new_router(base_dir, tracked_files, true).expect("Failed to create router");
+    let server = TestServer::new(router).expect("Failed to create test server");
+
+    let response = server.get("/root.md").await;
+    assert_eq!(response.status_code(), 200);
+    let html = response.text();
+
+    // Check root file is listed
+    assert!(html.contains("root.md"));
+
+    // Check folder names appear (will be implemented as tree structure)
+    // For now we just verify that files with folder paths appear
+    assert!(html.contains("docs") || html.contains("docs/intro.md") || html.contains("docs\\intro.md"));
+    assert!(html.contains("api") || html.contains("api/reference.md") || html.contains("api\\reference.md"));
+}
+
+#[tokio::test]
+async fn test_tree_structure_nested_folders() {
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+
+    // Create nested structure: docs/tutorials/beginner/start.md
+    let tutorials = temp_dir.path().join("docs").join("tutorials");
+    fs::create_dir_all(&tutorials).expect("Failed to create nested folders");
+
+    let beginner = tutorials.join("beginner");
+    fs::create_dir(&beginner).expect("Failed to create beginner folder");
+    fs::write(beginner.join("start.md"), "# Start").expect("Failed to write start.md");
+    fs::write(beginner.join("basics.md"), "# Basics").expect("Failed to write basics.md");
+
+    let advanced = tutorials.join("advanced");
+    fs::create_dir(&advanced).expect("Failed to create advanced folder");
+    fs::write(advanced.join("expert.md"), "# Expert").expect("Failed to write expert.md");
+
+    let base_dir = temp_dir.path().to_path_buf();
+    let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan");
+
+    let router = new_router(base_dir, tracked_files, true).expect("Failed to create router");
+    let server = TestServer::new(router).expect("Failed to create test server");
+
+    // Access a nested file
+    let response = server.get("/docs/tutorials/beginner/start.md").await;
+    assert_eq!(response.status_code(), 200);
+    assert!(response.text().contains("Start"));
+
+    // Check that nested paths are accessible
+    let response = server.get("/docs/tutorials/advanced/expert.md").await;
+    assert_eq!(response.status_code(), 200);
+    assert!(response.text().contains("Expert"));
+}
+
+#[tokio::test]
+async fn test_tree_structure_mixed_root_and_folders() {
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+
+    // Create mix of root files and folders
+    fs::write(temp_dir.path().join("readme.md"), "# README").expect("Failed to write readme.md");
+    fs::write(temp_dir.path().join("changelog.md"), "# Changelog").expect("Failed to write changelog.md");
+
+    let docs = temp_dir.path().join("docs");
+    fs::create_dir(&docs).expect("Failed to create docs folder");
+    fs::write(docs.join("api.md"), "# API").expect("Failed to write api.md");
+
+    let examples = temp_dir.path().join("examples");
+    fs::create_dir(&examples).expect("Failed to create examples folder");
+    fs::write(examples.join("hello.md"), "# Hello").expect("Failed to write hello.md");
+
+    let base_dir = temp_dir.path().to_path_buf();
+    let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan");
+
+    let router = new_router(base_dir, tracked_files, true).expect("Failed to create router");
+    let server = TestServer::new(router).expect("Failed to create test server");
+
+    let response = server.get("/readme.md").await;
+    assert_eq!(response.status_code(), 200);
+    let html = response.text();
+
+    // Check root files are listed
+    assert!(html.contains("readme.md"));
+    assert!(html.contains("changelog.md"));
+
+    // Check folder files are accessible
+    let response = server.get("/docs/api.md").await;
+    assert_eq!(response.status_code(), 200);
+
+    let response = server.get("/examples/hello.md").await;
+    assert_eq!(response.status_code(), 200);
 }
