@@ -613,14 +613,74 @@
             socket.onmessage = function(event) {
                 try {
                     const message = JSON.parse(event.data);
-                    if (message.type === 'Reload') {
-                        console.log('Reloading page via WebSocket');
-                        window.location.reload();
-                    }
+                    handleServerMessage(message);
                 } catch (error) {
                     console.error('Error parsing WebSocket message:', error);
                 }
             };
+
+            const ROOT_PATH = '/';
+
+            function handleServerMessage(message) {
+                if (message.type === 'Reload') {
+                    console.log('Reloading page via WebSocket');
+                    window.location.reload();
+                    return;
+                }
+
+                if (message.type === 'FileRenamed') {
+                    handleFileRenamed(message.old_name, message.new_name);
+                    return;
+                }
+
+                if (message.type === 'FileRemoved') {
+                    handleFileRemoved(message.name);
+                    return;
+                }
+            }
+
+            function getCurrentPath() {
+                return window.location.pathname.substring(1); // Remove leading '/'
+            }
+
+            function redirectTo(path, logMessage) {
+                console.log(logMessage);
+                window.location.href = path;
+            }
+
+            function reloadPage(logMessage) {
+                console.log(logMessage);
+                window.location.reload();
+            }
+
+            function handleFileEvent(affectedFile, redirectPath, currentMatchMsg, otherFileMsg) {
+                const currentPath = getCurrentPath();
+
+                if (currentPath === affectedFile) {
+                    redirectTo(redirectPath, currentMatchMsg);
+                    return;
+                }
+
+                reloadPage(otherFileMsg);
+            }
+
+            function handleFileRenamed(oldName, newName) {
+                handleFileEvent(
+                    oldName,
+                    ROOT_PATH + newName,
+                    `File renamed from ${oldName} to ${newName}, redirecting...`,
+                    'File renamed, reloading to update navigation'
+                );
+            }
+
+            function handleFileRemoved(fileName) {
+                handleFileEvent(
+                    fileName,
+                    ROOT_PATH,
+                    `File ${fileName} was removed, redirecting to home...`,
+                    'File removed, reloading to update navigation'
+                );
+            }
 
             socket.onerror = function(event) {
                 console.error('WebSocket error:', event);
