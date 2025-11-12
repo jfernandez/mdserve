@@ -1653,3 +1653,101 @@ async fn test_tree_structure_mixed_root_and_folders() {
     let response = server.get("/examples/hello.md").await;
     assert_eq!(response.status_code(), 200);
 }
+
+// ===========================
+// Folder Removal Tests
+// ===========================
+
+#[tokio::test]
+async fn test_remove_all_files_from_folder_folder_disappears() {
+    // Test that when all files are removed from a folder, the folder disappears from sidebar
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+
+    // Create root file
+    fs::write(temp_dir.path().join("root.md"), "# Root").expect("Failed to write root.md");
+
+    // Create folder with files
+    let docs = temp_dir.path().join("docs");
+    fs::create_dir(&docs).expect("Failed to create docs folder");
+    fs::write(docs.join("file1.md"), "# File 1").expect("Failed to write file1.md");
+    fs::write(docs.join("file2.md"), "# File 2").expect("Failed to write file2.md");
+
+    let base_dir = temp_dir.path().to_path_buf();
+    let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan");
+
+    let router = new_router(base_dir, tracked_files, true).expect("Failed to create router");
+    let server = TestServer::builder()
+        .http_transport()
+        .build(router)
+        .expect("Failed to create test server");
+
+    let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
+
+    // Verify folder appears in sidebar initially
+    let response = server.get("/root.md").await;
+    assert_eq!(response.status_code(), 200);
+    let html = response.text();
+    assert!(html.contains("docs") || html.contains("data-folder-path=\"docs\""));
+
+    // Remove all files from docs folder
+    fs::remove_file(docs.join("file1.md")).expect("Failed to remove file1.md");
+    fs::remove_file(docs.join("file2.md")).expect("Failed to remove file2.md");
+
+    // Wait for reload signal
+    let _ = tokio::time::timeout(
+        Duration::from_secs(WEBSOCKET_TIMEOUT_SECS),
+        websocket.receive_json::<ServerMessage>(),
+    )
+    .await;
+
+    // Verify folder no longer appears in sidebar
+    let response = server.get("/root.md").await;
+    assert_eq!(response.status_code(), 200);
+    let html = response.text();
+    assert!(!html.contains("data-folder-path=\"docs\""), "Empty folder should not appear in sidebar");
+}
+
+#[tokio::test]
+async fn test_remove_all_files_from_nested_folder() {
+    // Test that removing all files from a nested folder removes only that folder, not parent
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+
+    // Create structure: root.md, docs/intro.md, docs/tutorials/tutorial1.md
+    fs::write(temp_dir.path().join("root.md"), "# Root").expect("Failed to write root.md");
+
+    let docs = temp_dir.path().join("docs");
+    fs::create_dir(&docs).expect("Failed to create docs folder");
+    fs::write(docs.join("intro.md"), "# Intro").expect("Failed to write intro.md");
+
+    let tutorials = docs.join("tutorials");
+    fs::create_dir(&tutorials).expect("Failed to create tutorials folder");
+    fs::write(tutorials.join("tutorial1.md"), "# Tutorial 1").expect("Failed to write tutorial1.md");
+
+    let base_dir = temp_dir.path().to_path_buf();
+    let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan");
+
+    let router = new_router(base_dir, tracked_files, true).expect("Failed to create router");
+    let server = TestServer::builder()
+        .http_transport()
+        .build(router)
+        .expect("Failed to create test server");
+
+    let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
+
+    // Remove all files from tutorials folder
+    fs::remove_file(tutorials.join("tutorial1.md")).expect("Failed to remove tutorial1.md");
+
+    // Wait for reload signal
+    let _ = tokio::time::timeout(
+        Duration::from_secs(WEBSOCKET_TIMEOUT_SECS),
+        websocket.receive_json::<ServerMessage>(),
+    )
+    .await;
+
+    // Verify tutorials folder is gone but docs folder remains
+    let response = server.get("/root.md").await;
+    let html = response.text();
+    assert!(html.contains("data-folder-path=\"docs\""), "Parent folder should still appear");
+    assert!(!html.contains("data-folder-path=\"docs/tutorials\"") && !html.contains("data-folder-path=\"docs\\tutorials\""), "Empty nested folder should not appear");
+    assert!(html.contains("intro.md"), "Parent folder file should still be accessible");
+}
