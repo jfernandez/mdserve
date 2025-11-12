@@ -90,6 +90,26 @@ fn is_markdown_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Calculate relative path from base_dir, canonicalizing for consistency
+fn calculate_relative_path(file_path: &Path, base_dir: &Path) -> Result<String> {
+    let canonical_path = file_path.canonicalize()?;
+    let relative_path = canonical_path
+        .strip_prefix(base_dir)
+        .map_err(|_| anyhow::anyhow!("File path is not within base directory"))?
+        .to_string_lossy()
+        .to_string();
+    Ok(relative_path)
+}
+
+/// Compare two FileTreeNode items for sorting: folders first, then files, both alphabetically
+fn compare_tree_nodes(a: &FileTreeNode, b: &FileTreeNode) -> std::cmp::Ordering {
+    match (a.is_folder, b.is_folder) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.cmp(&b.name),
+    }
+}
+
 struct TrackedFile {
     path: PathBuf,
     #[allow(dead_code)]  // Will be used for folder removal and root route handling
@@ -126,15 +146,7 @@ impl MarkdownState {
             let content = fs::read_to_string(&file_path)?;
             let html = Self::markdown_to_html(&content)?;
             let content_hash = md5::compute(&content);
-
-            // Calculate relative path from base_dir
-            // Canonicalize the file path to ensure consistent comparison
-            let canonical_path = file_path.canonicalize()?;
-            let relative_path = canonical_path
-                .strip_prefix(&base_dir)
-                .map_err(|_| anyhow::anyhow!("File path is not within base directory"))?
-                .to_string_lossy()
-                .to_string();
+            let relative_path = calculate_relative_path(&file_path, &base_dir)?;
 
             tracked_files.insert(
                 relative_path.clone(),
@@ -242,13 +254,7 @@ impl MarkdownState {
             }
 
             // Sort children: folders first, then files, both alphabetically
-            children.sort_by(|a, b| {
-                match (a.is_folder, b.is_folder) {
-                    (true, false) => std::cmp::Ordering::Less,
-                    (false, true) => std::cmp::Ordering::Greater,
-                    _ => a.name.cmp(&b.name),
-                }
-            });
+            children.sort_by(compare_tree_nodes);
 
             FileTreeNode {
                 name,
@@ -273,13 +279,7 @@ impl MarkdownState {
         result.extend(root_files);
 
         // Sort result: folders first, then files, both alphabetically
-        result.sort_by(|a, b| {
-            match (a.is_folder, b.is_folder) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => a.name.cmp(&b.name),
-            }
-        });
+        result.sort_by(compare_tree_nodes);
 
         result
     }
@@ -300,14 +300,7 @@ impl MarkdownState {
     }
 
     fn add_tracked_file(&mut self, file_path: PathBuf) -> Result<()> {
-        // Calculate relative path from base_dir
-        // Canonicalize the file path to ensure consistent comparison
-        let canonical_path = file_path.canonicalize()?;
-        let relative_path = canonical_path
-            .strip_prefix(&self.base_dir)
-            .map_err(|_| anyhow::anyhow!("File path is not within base directory"))?
-            .to_string_lossy()
-            .to_string();
+        let relative_path = calculate_relative_path(&file_path, &self.base_dir)?;
 
         if self.tracked_files.contains_key(&relative_path) {
             return Ok(());
@@ -430,14 +423,9 @@ async fn handle_markdown_file_change(path: &Path, state: &SharedMarkdownState) {
 
     let mut state_guard = state.lock().await;
 
-    // Calculate relative path from base_dir
-    let Ok(canonical_path) = path.canonicalize() else {
+    let Ok(relative_path) = calculate_relative_path(path, &state_guard.base_dir) else {
         return;
     };
-    let Ok(rel_path) = canonical_path.strip_prefix(&state_guard.base_dir) else {
-        return;
-    };
-    let relative_path = rel_path.to_string_lossy().to_string();
 
     // If file is already tracked, refresh its content
     if state_guard.tracked_files.contains_key(&relative_path) {
