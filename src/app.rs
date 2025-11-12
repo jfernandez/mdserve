@@ -27,6 +27,7 @@ use tokio::{
 use tower_http::cors::CorsLayer;
 
 const TEMPLATE_NAME: &str = "main.html";
+const RESCAN_DELAY_MS: u64 = 200;
 static TEMPLATE_ENV: OnceLock<Environment<'static>> = OnceLock::new();
 const MERMAID_JS: &str = include_str!("../static/js/mermaid.min.js");
 const MERMAID_ETAG: &str = concat!("\"", env!("CARGO_PKG_VERSION"), "\"");
@@ -172,6 +173,72 @@ impl MarkdownState {
         Ok(())
     }
 
+    /// Rescans the base directory and synchronizes tracked_files with the current file system state.
+    /// Returns true if the file list changed (files added or removed).
+    fn rescan_directory(&mut self) -> Result<bool> {
+        if !self.is_directory_mode {
+            return Ok(false);
+        }
+
+        // Get current files in directory
+        let current_files = scan_markdown_files(&self.base_dir)?;
+        let current_filenames: std::collections::HashSet<String> = current_files
+            .iter()
+            .filter_map(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_string())
+            .collect();
+
+        // Track filenames that are currently tracked
+        let tracked_filenames: std::collections::HashSet<String> =
+            self.tracked_files.keys().cloned().collect();
+
+        // Check if there are any differences
+        if current_filenames == tracked_filenames {
+            return Ok(false);
+        }
+
+        // Remove files that no longer exist
+        self.tracked_files
+            .retain(|filename, _| current_filenames.contains(filename));
+
+        // Add new files
+        for file_path in current_files {
+            let Some(filename) = file_path.file_name() else {
+                continue;
+            };
+            let filename = filename.to_string_lossy().to_string();
+
+            if self.tracked_files.contains_key(&filename) {
+                continue;
+            }
+
+            // Try to add new file, ignore errors for individual files
+            let Ok(metadata) = fs::metadata(&file_path) else {
+                continue;
+            };
+            let Ok(content) = fs::read_to_string(&file_path) else {
+                continue;
+            };
+            let Ok(html) = Self::markdown_to_html(&content) else {
+                continue;
+            };
+            let Ok(last_modified) = metadata.modified() else {
+                continue;
+            };
+
+            self.tracked_files.insert(
+                filename,
+                TrackedFile {
+                    path: file_path,
+                    last_modified,
+                    html,
+                },
+            );
+        }
+
+        Ok(true)
+    }
+
     fn markdown_to_html(content: &str) -> Result<String> {
         let mut options = markdown::Options::gfm();
         options.compile.allow_dangerous_html = true;
@@ -211,62 +278,101 @@ async fn handle_markdown_file_change(path: &Path, state: &SharedMarkdownState) {
     }
 }
 
-async fn handle_file_event(event: Event, state: &SharedMarkdownState) {
-    match event.kind {
-        notify::EventKind::Modify(notify::event::ModifyKind::Name(rename_mode)) => {
-            use notify::event::RenameMode;
-            match rename_mode {
-                RenameMode::Both => {
-                    // Linux/Windows: Both old and new paths provided in single event
-                    if event.paths.len() == 2 {
-                        let new_path = &event.paths[1];
-                        handle_markdown_file_change(new_path, state).await;
-                    }
-                }
-                RenameMode::From => {
-                    // File being renamed away - ignore
-                }
-                RenameMode::To => {
-                    // File renamed to this location
-                    if let Some(path) = event.paths.first() {
-                        handle_markdown_file_change(path, state).await;
-                    }
-                }
-                RenameMode::Any => {
-                    // macOS: Sends separate events for old and new paths
-                    // Use file existence to distinguish old (doesn't exist) from new (exists)
-                    if let Some(path) = event.paths.first() {
-                        if path.exists() {
-                            handle_markdown_file_change(path, state).await;
-                        }
-                    }
-                }
-                _ => {}
+async fn rescan_and_reload(state: &SharedMarkdownState) {
+    let mut guard = state.lock().await;
+    let Ok(changed) = guard.rescan_directory() else {
+        return;
+    };
+    if changed {
+        let _ = guard.change_tx.send(ServerMessage::Reload);
+    }
+}
+
+/// Schedules a delayed rescan for directory mode to handle editor save sequences.
+/// Editors often rename files to backups, then create new files - we want both operations to complete.
+fn schedule_delayed_rescan(state: &SharedMarkdownState) {
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(tokio::time::Duration::from_millis(RESCAN_DELAY_MS)).await;
+        rescan_and_reload(&state_clone).await;
+    });
+}
+
+async fn handle_rename_event(
+    mode: notify::event::RenameMode,
+    paths: &[PathBuf],
+    state: &SharedMarkdownState,
+) {
+    use notify::event::RenameMode;
+
+    let is_dir_mode = state.lock().await.is_directory_mode;
+    if is_dir_mode {
+        schedule_delayed_rescan(state);
+        return;
+    }
+
+    match mode {
+        RenameMode::Both => {
+            let Some(new_path) = paths.get(1) else { return };
+            handle_markdown_file_change(new_path, state).await;
+        }
+        RenameMode::To => {
+            let Some(path) = paths.first() else { return };
+            handle_markdown_file_change(path, state).await;
+        }
+        RenameMode::Any => {
+            let Some(path) = paths.first() else { return };
+            if !path.exists() {
+                return;
             }
+            handle_markdown_file_change(path, state).await;
+        }
+        RenameMode::From | RenameMode::Other => {}
+    }
+}
+
+async fn handle_md_create_or_modify(path: &Path, state: &SharedMarkdownState) {
+    handle_markdown_file_change(path, state).await;
+}
+
+async fn handle_md_remove(state: &SharedMarkdownState) {
+    let is_dir_mode = state.lock().await.is_directory_mode;
+    if !is_dir_mode {
+        return;
+    }
+
+    schedule_delayed_rescan(state);
+}
+
+async fn handle_image_change(state: &SharedMarkdownState) {
+    let guard = state.lock().await;
+    let _ = guard.change_tx.send(ServerMessage::Reload);
+}
+
+async fn handle_file_event(event: Event, state: &SharedMarkdownState) {
+    use notify::EventKind::{Create, Modify, Remove};
+    use notify::event::ModifyKind;
+
+    match event.kind {
+        Modify(ModifyKind::Name(rename_mode)) => {
+            handle_rename_event(rename_mode, &event.paths, state).await;
         }
         _ => {
             for path in &event.paths {
                 if is_markdown_file(path) {
                     match event.kind {
-                        notify::EventKind::Create(_)
-                        | notify::EventKind::Modify(notify::event::ModifyKind::Data(_)) => {
-                            handle_markdown_file_change(path, state).await;
+                        Create(_) | Modify(ModifyKind::Data(_)) => {
+                            handle_md_create_or_modify(path, state).await;
                         }
-                        notify::EventKind::Remove(_) => {
-                            // Don't remove files from tracking. Editors like neovim save by
-                            // renaming the file to a backup, then creating a new one. If we
-                            // removed the file here, HTTP requests during that window would
-                            // see empty tracked_files and return 404.
+                        Remove(_) => {
+                            handle_md_remove(state).await;
                         }
                         _ => {}
                     }
                 } else if path.is_file() && is_image_file(path.to_str().unwrap_or("")) {
                     match event.kind {
-                        notify::EventKind::Modify(_)
-                        | notify::EventKind::Create(_)
-                        | notify::EventKind::Remove(_) => {
-                            let state_guard = state.lock().await;
-                            let _ = state_guard.change_tx.send(ServerMessage::Reload);
+                        Modify(_) | Create(_) | Remove(_) => {
+                            handle_image_change(state).await;
                         }
                         _ => {}
                     }
