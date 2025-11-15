@@ -176,6 +176,8 @@ impl MarkdownState {
         let mut options = markdown::Options::gfm();
         options.compile.allow_dangerous_html = true;
         options.parse.constructs.frontmatter = true;
+        options.parse.constructs.math_text = true;
+        options.parse.constructs.math_flow = true;
 
         let html_body = markdown::to_html_with_options(content, &options)
             .unwrap_or_else(|_| "Error parsing markdown".to_string());
