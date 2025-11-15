@@ -19,6 +19,10 @@ struct Args {
     /// Port to serve on
     #[arg(short, long, default_value = "3000")]
     port: u16,
+
+    /// Open in browser on start
+    #[arg(short, long, default_value_t = false)]
+    open: bool,
 }
 
 #[tokio::main]
@@ -52,6 +56,7 @@ async fn main() -> Result<()> {
         is_directory_mode,
         args.hostname,
         args.port,
+        args.open,
     )
     .await?;
 
