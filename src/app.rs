@@ -345,6 +345,7 @@ pub async fn serve_markdown(
     is_directory_mode: bool,
     hostname: impl AsRef<str>,
     port: u16,
+    open_in_browser: bool,
 ) -> Result<()> {
     let hostname = hostname.as_ref();
 
@@ -364,6 +365,12 @@ pub async fn serve_markdown(
     println!("🌐 Server running at: http://{listen_addr}");
     println!("⚡ Live reload enabled");
     println!("\nPress Ctrl+C to stop the server");
+
+    if open_in_browser {
+        if let Err(e) = open::that(format!("http://{listen_addr}")) {
+            eprintln!("Failed to open browser: {}", e);
+        }
+    }
 
     axum::serve(listener, router).await?;
 
