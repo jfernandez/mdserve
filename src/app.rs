@@ -92,10 +92,16 @@ struct MarkdownState {
     tracked_files: HashMap<String, TrackedFile>,
     is_directory_mode: bool,
     change_tx: broadcast::Sender<ServerMessage>,
+    include: Option<String>,
 }
 
 impl MarkdownState {
-    fn new(base_dir: PathBuf, file_paths: Vec<PathBuf>, is_directory_mode: bool) -> Result<Self> {
+    fn new(
+        base_dir: PathBuf,
+        file_paths: Vec<PathBuf>,
+        is_directory_mode: bool,
+        include: Option<String>,
+    ) -> Result<Self> {
         let (change_tx, _) = broadcast::channel::<ServerMessage>(16);
 
         let mut tracked_files = HashMap::new();
@@ -122,6 +128,7 @@ impl MarkdownState {
             tracked_files,
             is_directory_mode,
             change_tx,
+            include,
         })
     }
 
@@ -289,6 +296,7 @@ pub fn new_router(
     base_dir: PathBuf,
     tracked_files: Vec<PathBuf>,
     is_directory_mode: bool,
+    include: Option<String>,
 ) -> Result<Router> {
     let base_dir = base_dir.canonicalize()?;
 
@@ -296,6 +304,7 @@ pub fn new_router(
         base_dir.clone(),
         tracked_files,
         is_directory_mode,
+        include,
     )?));
 
     let watcher_state = state.clone();
@@ -345,11 +354,27 @@ pub async fn serve_markdown(
     is_directory_mode: bool,
     hostname: impl AsRef<str>,
     port: u16,
+    include_in_header: Option<Vec<PathBuf>>,
 ) -> Result<()> {
     let hostname = hostname.as_ref();
 
     let first_file = tracked_files.first().cloned();
-    let router = new_router(base_dir.clone(), tracked_files, is_directory_mode)?;
+
+    let include = if let Some(include_path) = include_in_header {
+        println!("📎 Files included into header:");
+        let mut combined = String::new();
+        for path in include_path {
+            println!("  - {}", path.display());
+            let content = fs::read_to_string(&path)?;
+            combined.push_str(&content);
+            combined.push('\n');
+        }
+        Some(combined)
+    } else {
+        None
+    };
+
+    let router = new_router(base_dir.clone(), tracked_files, is_directory_mode, include)?;
 
     let listener = TcpListener::bind((hostname, port)).await?;
 
@@ -439,6 +464,12 @@ async fn render_markdown(state: &MarkdownState, current_file: &str) -> (StatusCo
         return (StatusCode::NOT_FOUND, Html("File not found".to_string()));
     };
 
+    let include = if let Some(include) = &state.include {
+        Value::from_safe_string(include.clone())
+    } else {
+        Value::from("")
+    };
+
     let rendered = if state.show_navigation() {
         let filenames = state.get_sorted_filenames();
         let files: Vec<Value> = filenames
@@ -458,6 +489,7 @@ async fn render_markdown(state: &MarkdownState, current_file: &str) -> (StatusCo
             show_navigation => true,
             files => files,
             current_file => current_file,
+            include => include,
         }) {
             Ok(r) => r,
             Err(e) => {
@@ -472,6 +504,7 @@ async fn render_markdown(state: &MarkdownState, current_file: &str) -> (StatusCo
             content => content,
             mermaid_enabled => has_mermaid,
             show_navigation => false,
+            include => include,
         }) {
             Ok(r) => r,
             Err(e) => {
