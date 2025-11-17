@@ -92,10 +92,16 @@ struct MarkdownState {
     tracked_files: HashMap<String, TrackedFile>,
     is_directory_mode: bool,
     change_tx: broadcast::Sender<ServerMessage>,
+    canonical_mode: bool,
 }
 
 impl MarkdownState {
-    fn new(base_dir: PathBuf, file_paths: Vec<PathBuf>, is_directory_mode: bool) -> Result<Self> {
+    fn new(
+        base_dir: PathBuf,
+        file_paths: Vec<PathBuf>,
+        is_directory_mode: bool,
+        canonical_mode: bool,
+    ) -> Result<Self> {
         let (change_tx, _) = broadcast::channel::<ServerMessage>(16);
 
         let mut tracked_files = HashMap::new();
@@ -122,11 +128,12 @@ impl MarkdownState {
             tracked_files,
             is_directory_mode,
             change_tx,
+            canonical_mode,
         })
     }
 
     fn show_navigation(&self) -> bool {
-        self.is_directory_mode
+        self.is_directory_mode && !self.canonical_mode
     }
 
     fn get_sorted_filenames(&self) -> Vec<String> {
@@ -289,6 +296,7 @@ pub fn new_router(
     base_dir: PathBuf,
     tracked_files: Vec<PathBuf>,
     is_directory_mode: bool,
+    canonical_mode: bool,
 ) -> Result<Router> {
     let base_dir = base_dir.canonicalize()?;
 
@@ -296,6 +304,7 @@ pub fn new_router(
         base_dir.clone(),
         tracked_files,
         is_directory_mode,
+        canonical_mode,
     )?));
 
     let watcher_state = state.clone();
@@ -345,18 +354,29 @@ pub async fn serve_markdown(
     is_directory_mode: bool,
     hostname: impl AsRef<str>,
     port: u16,
+    canonical_mode: bool,
 ) -> Result<()> {
     let hostname = hostname.as_ref();
 
     let first_file = tracked_files.first().cloned();
-    let router = new_router(base_dir.clone(), tracked_files, is_directory_mode)?;
+    let router = new_router(
+        base_dir.clone(),
+        tracked_files,
+        is_directory_mode,
+        canonical_mode,
+    )?;
 
     let listener = TcpListener::bind((hostname, port)).await?;
 
     let listen_addr = format_host(hostname, port);
 
     if is_directory_mode {
-        println!("📁 Serving markdown files from: {}", base_dir.display());
+        if canonical_mode {
+            println!("📁 Serving markdown files from: {}", base_dir.display());
+            println!("📝 Canonical mode - no navigation sidebar");
+        } else {
+            println!("📁 Serving markdown files from: {}", base_dir.display());
+        }
     } else if let Some(file_path) = first_file {
         println!("📄 Serving markdown file: {}", file_path.display());
     }

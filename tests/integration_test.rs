@@ -31,9 +31,15 @@ fn create_test_server_impl(content: &str, use_http: bool) -> (TestServer, NamedT
         .to_path_buf();
     let tracked_files = vec![canonical_path];
     let is_directory_mode = false;
+    let is_canonical_mode = false;
 
-    let router =
-        new_router(base_dir, tracked_files, is_directory_mode).expect("Failed to create router");
+    let router = new_router(
+        base_dir,
+        tracked_files,
+        is_directory_mode,
+        is_canonical_mode,
+    )
+    .expect("Failed to create router");
 
     let server = if use_http {
         TestServer::builder()
@@ -55,7 +61,7 @@ async fn create_test_server_with_http(content: &str) -> (TestServer, NamedTempFi
     create_test_server_impl(content, true)
 }
 
-fn create_directory_server_impl(use_http: bool) -> (TestServer, TempDir) {
+fn create_directory_server_impl(use_http: bool, canonical_mode: bool) -> (TestServer, TempDir) {
     let temp_dir = tempdir().expect("Failed to create temp dir");
 
     fs::write(temp_dir.path().join("test1.md"), TEST_FILE_1_CONTENT)
@@ -68,9 +74,15 @@ fn create_directory_server_impl(use_http: bool) -> (TestServer, TempDir) {
     let base_dir = temp_dir.path().to_path_buf();
     let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan markdown files");
     let is_directory_mode = true;
+    let is_canonical_mode = canonical_mode;
 
-    let router =
-        new_router(base_dir, tracked_files, is_directory_mode).expect("Failed to create router");
+    let router = new_router(
+        base_dir,
+        tracked_files,
+        is_directory_mode,
+        is_canonical_mode,
+    )
+    .expect("Failed to create router");
 
     let server = if use_http {
         TestServer::builder()
@@ -85,11 +97,15 @@ fn create_directory_server_impl(use_http: bool) -> (TestServer, TempDir) {
 }
 
 async fn create_directory_server() -> (TestServer, TempDir) {
-    create_directory_server_impl(false)
+    create_directory_server_impl(false, false)
 }
 
 async fn create_directory_server_with_http() -> (TestServer, TempDir) {
-    create_directory_server_impl(true)
+    create_directory_server_impl(true, false)
+}
+
+async fn create_directory_server_canonical() -> (TestServer, TempDir) {
+    create_directory_server_impl(false, true)
 }
 
 #[tokio::test]
@@ -234,8 +250,15 @@ async fn test_image_serving() {
     let base_dir = temp_dir.path().to_path_buf();
     let tracked_files = vec![md_path];
     let is_directory_mode = false;
-    let router =
-        new_router(base_dir, tracked_files, is_directory_mode).expect("Failed to create router");
+    let is_canonical_mode = false;
+
+    let router = new_router(
+        base_dir,
+        tracked_files,
+        is_directory_mode,
+        is_canonical_mode,
+    )
+    .expect("Failed to create router");
     let server = TestServer::new(router).expect("Failed to create test server");
 
     // Test that markdown includes img tag
@@ -271,8 +294,15 @@ async fn test_non_image_files_not_served() {
     let base_dir = temp_dir.path().to_path_buf();
     let tracked_files = vec![md_path];
     let is_directory_mode = false;
-    let router =
-        new_router(base_dir, tracked_files, is_directory_mode).expect("Failed to create router");
+    let is_canonical_mode = false;
+
+    let router = new_router(
+        base_dir,
+        tracked_files,
+        is_directory_mode,
+        is_canonical_mode,
+    )
+    .expect("Failed to create router");
     let server = TestServer::new(router).expect("Failed to create test server");
 
     // Test that non-image files return 404
@@ -557,6 +587,19 @@ async fn test_directory_mode_has_navigation_sidebar() {
     assert!(body.contains("test1.md"));
     assert!(body.contains("test2.markdown"));
     assert!(body.contains("test3.md"));
+}
+
+#[tokio::test]
+async fn test_directory_mode_canonical_hides_navigation_sidebar() {
+    let (server, _temp_dir) = create_directory_server_canonical().await;
+
+    let response = server.get("/test1.md").await;
+    assert_eq!(response.status_code(), 200);
+    let body = response.text();
+
+    // Verify no navigation sidebar when in canonical mode
+    assert!(!body.contains(r#"<nav class="sidebar">"#));
+    assert!(!body.contains(r#"<ul class="file-list">"#));
 }
 
 #[tokio::test]

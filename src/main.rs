@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::Parser;
+use clap::{ArgAction, Parser};
 use std::path::PathBuf;
 
 use mdserve::{scan_markdown_files, serve_markdown};
@@ -19,6 +19,10 @@ struct Args {
     /// Port to serve on
     #[arg(short, long, default_value = "3000")]
     port: u16,
+
+    /// Canonical mode - no navigation shown in sidebar for a directory
+    #[arg(short, long, action = ArgAction::SetTrue)]
+    canonical: bool,
 }
 
 #[tokio::main]
@@ -45,13 +49,14 @@ async fn main() -> Result<()> {
         anyhow::bail!("Path must be a file or directory");
     };
 
-    // Single unified serve function
+    // Pass the canonical flag to control navigation display
     serve_markdown(
         base_dir,
         tracked_files,
         is_directory_mode,
         args.hostname,
         args.port,
+        args.canonical,
     )
     .await?;
 
