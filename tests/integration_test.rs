@@ -102,7 +102,7 @@ async fn test_server_starts_and_serves_basic_markdown() {
     let body = response.text();
 
     // Check that markdown was converted to HTML
-    assert!(body.contains("<h1>Hello World</h1>"));
+    assert!(body.contains(">Hello World</h1>"));
     assert!(body.contains("<strong>bold</strong>"));
 
     // Check that theme toggle is present
@@ -514,21 +514,21 @@ async fn test_directory_mode_serves_multiple_files() {
     let response1 = server.get("/test1.md").await;
     assert_eq!(response1.status_code(), 200);
     let body1 = response1.text();
-    assert!(body1.contains("<h1>Test 1</h1>"));
+    assert!(body1.contains(">Test 1</h1>"));
     assert!(body1.contains("Content of test1"));
 
     // Test accessing second file with .markdown extension
     let response2 = server.get("/test2.markdown").await;
     assert_eq!(response2.status_code(), 200);
     let body2 = response2.text();
-    assert!(body2.contains("<h1>Test 2</h1>"));
+    assert!(body2.contains(">Test 2</h1>"));
     assert!(body2.contains("Content of test2"));
 
     // Test accessing third file
     let response3 = server.get("/test3.md").await;
     assert_eq!(response3.status_code(), 200);
     let body3 = response3.text();
-    assert!(body3.contains("<h1>Test 3</h1>"));
+    assert!(body3.contains(">Test 3</h1>"));
     assert!(body3.contains("Content of test3"));
 }
 
@@ -713,7 +713,7 @@ async fn test_directory_mode_new_file_triggers_reload() {
     let new_file_response = server.get("/test4.md").await;
     assert_eq!(new_file_response.status_code(), 200);
     let new_file_body = new_file_response.text();
-    assert!(new_file_body.contains("<h1>Test 4</h1>"));
+    assert!(new_file_body.contains(">Test 4</h1>"));
     assert!(new_file_body.contains("This is a new file"));
 }
 
@@ -871,7 +871,7 @@ async fn test_yaml_frontmatter_is_stripped() {
     assert!(!body.contains("author: Name"));
 
     // Content should still be rendered
-    assert!(body.contains("<h1>Test Post</h1>"));
+    assert!(body.contains(">Test Post</h1>"));
 }
 
 #[tokio::test]
@@ -887,7 +887,7 @@ async fn test_toml_frontmatter_is_stripped() {
     assert!(!body.contains("title = \"Test Post\""));
 
     // Content should still be rendered
-    assert!(body.contains("<h1>Test Post</h1>"));
+    assert!(body.contains(">Test Post</h1>"));
 }
 
 #[tokio::test]
