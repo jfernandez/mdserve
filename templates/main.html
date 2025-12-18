@@ -418,6 +418,11 @@
             background-color: transparent;
             padding: 0;
         }
+        /* Highlight.js overrides to match app theme */
+        pre code.hljs {
+            background: var(--code-bg);
+            padding: 0;
+        }
         blockquote {
             border-left: 4px solid var(--border-color-light);
             padding-left: 16px;
@@ -454,6 +459,11 @@
     {% if mermaid_enabled %}
     <script src="/mermaid.min.js"></script>
     {% endif %}
+
+    <!-- Highlight.js for syntax highlighting -->
+    <link rel="stylesheet" id="hljs-theme" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/scala.min.js"></script>
     <script>
         let lastModified = Date.now();
 
@@ -481,6 +491,7 @@
             localStorage.setItem('theme', theme);
             updateThemeSelection(theme);
             updateMermaidTheme();
+            updateHighlightTheme();
             closeThemeModal();
         }
 
@@ -600,6 +611,38 @@
             }
         }
 
+        // Highlight.js management
+        function getHighlightTheme() {
+            const currentTheme = document.documentElement.getAttribute('data-theme');
+            switch (currentTheme) {
+                case 'dark':
+                    return 'github-dark';
+                case 'catppuccin-latte':
+                    return 'atom-one-light';
+                case 'catppuccin-macchiato':
+                case 'catppuccin-mocha':
+                    return 'atom-one-dark';
+                case 'light':
+                default:
+                    return 'github';
+            }
+        }
+
+        function initHighlightJs() {
+            if (typeof hljs !== 'undefined') {
+                updateHighlightTheme();
+                hljs.highlightAll();
+            }
+        }
+
+        function updateHighlightTheme() {
+            const themeName = getHighlightTheme();
+            const themeLink = document.getElementById('hljs-theme');
+            if (themeLink) {
+                themeLink.href = `https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/${themeName}.min.css`;
+            }
+        }
+
         // Auto-refresh functionality using WebSocket
         function setupLiveReload() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -638,6 +681,7 @@
             initTheme();
             initSidebar();
             initMermaid();
+            initHighlightJs();
             setupLiveReload();
 
             // Modal close functionality
