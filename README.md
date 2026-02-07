@@ -1,19 +1,37 @@
 # mdserve
 
-Fast markdown preview server with **live reload** and **theme support**.
+Markdown preview server for AI coding agents.
 
-Just run `mdserve file.md` and start writing. One statically-compiled executable that runs anywhere - no installation, no dependencies.
+Follow along as your AI agent writes markdown, rendered live in the browser
+instead of raw text in the terminal.
 
 ![Terminal output when starting mdserve](mdserve-terminal-output.png)
 
 ## Features
 
-- ⚡ **Instant Live Reload** - Real-time updates via WebSocket when markdown file changes
-- 📁 **Directory Mode** - Serve all markdown files in a directory with a navigation sidebar
-- 🎨 **Multiple Themes** - Built-in theme selector with 5 themes including Catppuccin variants
-- 📝 **GitHub Flavored Markdown** - Full GFM support including tables, strikethrough, code blocks, and task lists
-- 📊 **Mermaid Diagrams** - Automatic rendering of flowcharts, sequence diagrams, class diagrams, and more
-- 🚀 **Fast** - Built with Rust and Axum for excellent performance and low memory usage
+**Zero config.** `mdserve file.md` just works. No config files, no flags
+required, no setup steps.
+
+**Single binary.** One statically-compiled executable. Install it and forget
+about it. No runtime dependencies to manage.
+
+**Instant live reload.** File changes appear in the browser immediately via
+WebSocket. This is the core interaction: an agent writes, a human reads.
+
+**Ephemeral sessions.** Start it during a coding session, kill it when you're
+done. mdserve is not a long-running server and doesn't need to be.
+
+**Agent-friendly content.** Full GFM support (tables, task lists, code blocks),
+Mermaid diagrams, and directory mode with sidebar navigation - the kinds of
+content AI coding agents actually produce.
+
+## What mdserve is not
+
+- **Not a documentation site generator.** Use mdBook, Docusaurus, or MkDocs
+  for that.
+- **Not a static site server** or something you deploy to production.
+- **Not a general-purpose markdown authoring tool** with heavy customization
+  for manual writing workflows.
 
 ## Installation
 
@@ -94,30 +112,10 @@ mdserve README.md --hostname 0.0.0.0 --port 8080
 - Only monitors the immediate directory (non-recursive)
 
 
-## Endpoints
+## Themes
 
-Once running, the server provides (default: [http://localhost:3000](http://localhost:3000)):
-
-- **[`/`](http://localhost:3000/)** - Rendered HTML with live reload via WebSocket
-- **[`/ws`](http://localhost:3000/ws)** - WebSocket endpoint for real-time updates
-
-## Theme System
-
-**Built-in Theme Selector**
-- Click the 🎨 button in the top-right corner to open theme selector
-- **5 Available Themes**:
-  - **Light**: Clean, bright theme optimized for readability
-  - **Dark**: GitHub-inspired dark theme with comfortable contrast
-  - **Catppuccin Latte**: Warm light theme with soothing pastels
-  - **Catppuccin Macchiato**: Cozy mid-tone theme with rich colors
-  - **Catppuccin Mocha**: Deep dark theme with vibrant accents
-- **Persistent Preference**: Your theme choice is automatically saved in browser localStorage
-
-*Click the theme button (🎨) to access the built-in theme selector*
-
-![Theme picker interface](mdserve-theme-picker.png)
-
-*mdserve running with the Catppuccin Macchiato theme - notice the warm, cozy colors and excellent readability*
+Five built-in themes (light, dark, and Catppuccin variants) accessible from the
+theme picker in the top-right corner. Your choice persists across sessions.
 
 ![mdserve with Catppuccin Macchiato theme](mdserve-catppuccin-macchiato.png)
 
@@ -146,6 +144,17 @@ cargo test
 # Run integration tests only
 cargo test --test integration_test
 ```
+
+## Contributing
+
+Contributions should enhance the agent-companion workflow. The best PRs improve
+rendering of content that agents produce (code blocks, diagrams, tables, math),
+make live reload more robust, or refine the zero-config experience. Features
+that push mdserve toward being a documentation platform or a configurable server
+are out of scope.
+
+We use [conventional commits](https://www.conventionalcommits.org/) (`feat:`,
+`fix:`, `chore:`, etc.). PRs that don't follow this style will not be merged.
 
 ## License
 
