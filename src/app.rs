@@ -1,4 +1,6 @@
 use anyhow::Result;
+use regex::Regex;
+use std::sync::LazyLock;
 use axum::{
     extract::{
         ws::{Message, WebSocket},
@@ -30,6 +32,57 @@ const TEMPLATE_NAME: &str = "main.html";
 static TEMPLATE_ENV: OnceLock<Environment<'static>> = OnceLock::new();
 const MERMAID_JS: &str = include_str!("../static/js/mermaid.min.js");
 const MERMAID_ETAG: &str = concat!("\"", env!("CARGO_PKG_VERSION"), "\"");
+
+static HEADING_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"<(h[1-6])>([\s\S]*?)</h[1-6]>").unwrap());
+static HTML_TAG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<[^>]+>").unwrap());
+
+fn add_heading_ids(html: &str) -> String {
+    let mut seen_ids: HashMap<String, usize> = HashMap::new();
+
+    HEADING_RE
+        .replace_all(html, |caps: &regex::Captures| {
+            let tag = &caps[1];
+            let content = &caps[2];
+
+            let text = HTML_TAG_RE.replace_all(content, "");
+            let slug = generate_slug(&text);
+
+            let id = match seen_ids.get(&slug) {
+                Some(&count) => {
+                    seen_ids.insert(slug.clone(), count + 1);
+                    format!("{slug}-{count}")
+                }
+                None => {
+                    seen_ids.insert(slug.clone(), 1);
+                    slug
+                }
+            };
+
+            format!("<{tag} id=\"{id}\">{content}</{tag}>")
+        })
+        .to_string()
+}
+
+fn generate_slug(text: &str) -> String {
+    text.to_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() {
+                c
+            } else if c.is_whitespace() || c == '-' || c == '_' {
+                '-'
+            } else {
+                '\0'
+            }
+        })
+        .filter(|&c| c != '\0')
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
 
 type SharedMarkdownState = Arc<Mutex<MarkdownState>>;
 
@@ -180,7 +233,9 @@ impl MarkdownState {
         let html_body = markdown::to_html_with_options(content, &options)
             .unwrap_or_else(|_| "Error parsing markdown".to_string());
 
-        Ok(html_body)
+        let html_with_ids = add_heading_ids(&html_body);
+
+        Ok(html_with_ids)
     }
 }
 
@@ -782,5 +837,42 @@ mod tests {
 
         assert_eq!(format_host("::1", 3000), "[::1]:3000");
         assert_eq!(format_host("2001:db8::1", 8080), "[2001:db8::1]:8080");
+    }
+
+    #[test]
+    fn test_generate_slug() {
+        assert_eq!(generate_slug("Hello World"), "hello-world");
+        assert_eq!(generate_slug("Getting Started"), "getting-started");
+        assert_eq!(generate_slug("API Reference"), "api-reference");
+        assert_eq!(generate_slug("What's New?"), "whats-new");
+        assert_eq!(generate_slug("C++ Programming"), "c-programming");
+        assert_eq!(generate_slug("  Multiple   Spaces  "), "multiple-spaces");
+        assert_eq!(generate_slug("already-kebab-case"), "already-kebab-case");
+        assert_eq!(generate_slug("MixedCase"), "mixedcase");
+        assert_eq!(generate_slug("123 Numbers"), "123-numbers");
+    }
+
+    #[test]
+    fn test_add_heading_ids() {
+        let html = "<h1>Introduction</h1><p>Some text</p><h2>Getting Started</h2>";
+        let result = add_heading_ids(html);
+        assert!(result.contains("<h1 id=\"introduction\">Introduction</h1>"));
+        assert!(result.contains("<h2 id=\"getting-started\">Getting Started</h2>"));
+    }
+
+    #[test]
+    fn test_add_heading_ids_with_duplicates() {
+        let html = "<h2>Section</h2><h2>Section</h2><h2>Section</h2>";
+        let result = add_heading_ids(html);
+        assert!(result.contains("<h2 id=\"section\">Section</h2>"));
+        assert!(result.contains("<h2 id=\"section-1\">Section</h2>"));
+        assert!(result.contains("<h2 id=\"section-2\">Section</h2>"));
+    }
+
+    #[test]
+    fn test_add_heading_ids_with_nested_html() {
+        let html = "<h1>Hello <strong>World</strong></h1>";
+        let result = add_heading_ids(html);
+        assert!(result.contains("<h1 id=\"hello-world\">Hello <strong>World</strong></h1>"));
     }
 }
