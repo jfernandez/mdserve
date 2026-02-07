@@ -99,6 +99,9 @@ mdserve docs/ -p 8080
 
 # Serve on custom hostname and port
 mdserve README.md --hostname 0.0.0.0 --port 8080
+
+# Open in browser automatically
+mdserve README.md --open
 ```
 
 ### Single-File vs Directory Mode

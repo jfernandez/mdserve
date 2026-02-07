@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use axum::{
     extract::{
         ws::{Message, WebSocket},
@@ -15,7 +15,7 @@ use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    net::Ipv6Addr,
+    net::{Ipv4Addr, Ipv6Addr},
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
     time::SystemTime,
@@ -327,6 +327,7 @@ pub(crate) async fn serve_markdown(
     is_directory_mode: bool,
     hostname: impl AsRef<str>,
     port: u16,
+    open: bool,
 ) -> Result<()> {
     let hostname = hostname.as_ref();
 
@@ -347,6 +348,11 @@ pub(crate) async fn serve_markdown(
     println!("⚡ Live reload enabled");
     println!("\nPress Ctrl+C to stop the server");
 
+    if open {
+        let browse_addr = format_host(&browsable_host(hostname), port);
+        open_browser(&format!("http://{browse_addr}"))?;
+    }
+
     axum::serve(listener, router).await?;
 
     Ok(())
@@ -359,6 +365,60 @@ fn format_host(hostname: &str, port: u16) -> String {
     } else {
         format!("{hostname}:{port}")
     }
+}
+
+/// Map wildcard bind addresses to loopback so the browser gets a
+/// reachable URL.
+fn browsable_host(hostname: &str) -> String {
+    if hostname
+        .parse::<Ipv4Addr>()
+        .ok()
+        .is_some_and(|ip| ip.is_unspecified())
+    {
+        "127.0.0.1".into()
+    } else if hostname
+        .parse::<Ipv6Addr>()
+        .ok()
+        .is_some_and(|ip| ip.is_unspecified())
+    {
+        "::1".into()
+    } else {
+        hostname.into()
+    }
+}
+
+/// Open a URL in the default browser using platform commands.
+///
+/// Fails immediately if the command cannot be spawned (e.g. not
+/// installed). Exit status is monitored in a background thread
+/// since opener commands may block until their handler process
+/// returns.
+fn open_browser(url: &str) -> Result<()> {
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(target_os = "linux") {
+        "xdg-open"
+    } else {
+        anyhow::bail!("--open is not supported on this platform");
+    };
+
+    let mut child = std::process::Command::new(program)
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .with_context(|| format!("failed to run {program}"))?;
+
+    std::thread::spawn(move || match child.wait() {
+        Ok(status) if !status.success() => {
+            eprintln!("{program} exited with {status}");
+        }
+        Err(e) => eprintln!("Failed waiting on {program}: {e}"),
+        _ => {}
+    });
+
+    Ok(())
 }
 
 async fn serve_html_root(State(state): State<SharedMarkdownState>) -> impl IntoResponse {
@@ -764,6 +824,17 @@ mod tests {
 
         assert_eq!(format_host("::1", 3000), "[::1]:3000");
         assert_eq!(format_host("2001:db8::1", 8080), "[2001:db8::1]:8080");
+    }
+
+    #[test]
+    fn test_browsable_host() {
+        assert_eq!(browsable_host("0.0.0.0"), "127.0.0.1");
+        assert_eq!(browsable_host("::"), "::1");
+        assert_eq!(browsable_host("127.0.0.1"), "127.0.0.1");
+        assert_eq!(browsable_host("::1"), "::1");
+        assert_eq!(browsable_host("192.168.1.1"), "192.168.1.1");
+        assert_eq!(browsable_host("localhost"), "localhost");
+        assert_eq!(browsable_host("example.com"), "example.com");
     }
 
     use axum_test::TestServer;
