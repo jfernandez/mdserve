@@ -38,6 +38,15 @@ minijinja-embed (changes to `templates/` require a rebuild).
 - **Minimal client-side JS.** Most logic is server-side. Client JS handles
   theme selection and WebSocket reload only.
 
+## Changelog
+
+Generated with [git-cliff](https://git-cliff.org/) using `cliff.toml`. To
+update `CHANGELOG.md`:
+
+```bash
+git cliff -o CHANGELOG.md
+```
+
 ## Commits
 
 Use conventional commits: `type: lowercase description` (e.g. `feat:`, `fix:`,
