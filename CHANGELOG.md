@@ -1,3 +1,19 @@
+## [1.0.0] - 2026-02-07
+### Features
+- Add --open flag to launch browser (#59)
+- Add Claude Code plugin metadata and mdserve skill (#60)
+### Refactoring
+- Convert to binary-only crate (#58)
+### Documentation
+- Rewrite README for AI agent companion focus
+- Add CLAUDE.md for AI agent contributors
+- Add changelog workflow to CLAUDE.md
+### Build
+- Add crates.io publishing to workflow
+### Miscellaneous Tasks
+- Update crate description to match new focus
+- Skip release commits in git-cliff output
+
 ## [0.5.1] - 2025-10-28
 ### Bug Fixes
 - Handle temp-file-rename edits in file watcher
@@ -60,4 +76,6 @@
 - Add image support
 - Add screenshot of mdserve serving README.md
 - Enable HTML tag rendering in markdown files (#2)
+
+## [0.1.0] - 2025-09-22
 
