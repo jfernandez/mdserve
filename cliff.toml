@@ -50,6 +50,8 @@ commit_parsers = [
     { message = "^build", group = "Build" },
     { message = "^ci", group = "CI" },
     { message = "^chore\\(release\\): prepare for", skip = true },
+    { message = "^chore: release", skip = true },
+    { message = "^Release ", skip = true },
     { message = "^chore", group = "Miscellaneous Tasks" },
     { body = ".*security", group = "Security" },
     { message = ".*", group = "Other" },
