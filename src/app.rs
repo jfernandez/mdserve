@@ -14,6 +14,7 @@ use minijinja::{context, value::Value, Environment};
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     fs,
     net::Ipv6Addr,
     path::{Path, PathBuf},
@@ -54,8 +55,6 @@ pub enum ServerMessage {
     Reload,
     Pong,
 }
-
-use std::collections::HashMap;
 
 pub fn scan_markdown_files(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut md_files = Vec::new();
