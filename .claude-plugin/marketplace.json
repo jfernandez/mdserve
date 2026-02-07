@@ -1,0 +1,12 @@
+{
+  "name": "mdserve marketplace",
+  "owner": {
+    "name": "Jose Fernandez"
+  },
+  "plugins": [
+    {
+      "name": "mdserve",
+      "source": "./"
+    }
+  ]
+}
