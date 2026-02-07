@@ -2,7 +2,9 @@ use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
 
-use mdserve::{scan_markdown_files, serve_markdown};
+mod app;
+
+use app::{scan_markdown_files, serve_markdown};
 
 #[derive(Parser)]
 #[command(name = "mdserve")]

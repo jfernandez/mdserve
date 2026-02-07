@@ -43,21 +43,21 @@ fn template_env() -> &'static Environment<'static> {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
-pub enum ClientMessage {
+enum ClientMessage {
     Ping,
     RequestRefresh,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "type")]
-pub enum ServerMessage {
+enum ServerMessage {
     Reload,
     Pong,
 }
 
 use std::collections::HashMap;
 
-pub fn scan_markdown_files(dir: &Path) -> Result<Vec<PathBuf>> {
+pub(crate) fn scan_markdown_files(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut md_files = Vec::new();
 
     for entry in fs::read_dir(dir)? {
@@ -276,16 +276,7 @@ async fn handle_file_event(event: Event, state: &SharedMarkdownState) {
     }
 }
 
-/// Creates a new Router for serving markdown files.
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - Files cannot be read or don't exist
-/// - File metadata cannot be accessed
-/// - File watcher cannot be created
-/// - File watcher cannot watch the base directory
-pub fn new_router(
+fn new_router(
     base_dir: PathBuf,
     tracked_files: Vec<PathBuf>,
     is_directory_mode: bool,
@@ -330,16 +321,7 @@ pub fn new_router(
     Ok(router)
 }
 
-/// Serves markdown files with live reload support.
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - Files cannot be read or don't exist
-/// - Cannot bind to the specified host address
-/// - Server fails to start
-/// - Axum serve encounters an error
-pub async fn serve_markdown(
+pub(crate) async fn serve_markdown(
     base_dir: PathBuf,
     tracked_files: Vec<PathBuf>,
     is_directory_mode: bool,
@@ -782,5 +764,912 @@ mod tests {
 
         assert_eq!(format_host("::1", 3000), "[::1]:3000");
         assert_eq!(format_host("2001:db8::1", 8080), "[2001:db8::1]:8080");
+    }
+
+    use axum_test::TestServer;
+    use std::time::Duration;
+    use tempfile::{Builder, NamedTempFile, TempDir};
+
+    const FILE_WATCH_DELAY_MS: u64 = 100;
+    const WEBSOCKET_TIMEOUT_SECS: u64 = 5;
+
+    const TEST_FILE_1_CONTENT: &str = "# Test 1\n\nContent of test1";
+    const TEST_FILE_2_CONTENT: &str = "# Test 2\n\nContent of test2";
+    const TEST_FILE_3_CONTENT: &str = "# Test 3\n\nContent of test3";
+    const YAML_FRONTMATTER_CONTENT: &str =
+        "---\ntitle: Test Post\nauthor: Name\n---\n\n# Test Post\n";
+    const TOML_FRONTMATTER_CONTENT: &str = "+++\ntitle = \"Test Post\"\n+++\n\n# Test Post\n";
+
+    fn create_test_server_impl(content: &str, use_http: bool) -> (TestServer, NamedTempFile) {
+        let temp_file = Builder::new()
+            .suffix(".md")
+            .tempfile()
+            .expect("Failed to create temp file");
+        fs::write(&temp_file, content).expect("Failed to write temp file");
+
+        let canonical_path = temp_file
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| temp_file.path().to_path_buf());
+
+        let base_dir = canonical_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .to_path_buf();
+        let tracked_files = vec![canonical_path];
+        let is_directory_mode = false;
+
+        let router = new_router(base_dir, tracked_files, is_directory_mode)
+            .expect("Failed to create router");
+
+        let server = if use_http {
+            TestServer::builder()
+                .http_transport()
+                .build(router)
+                .expect("Failed to create test server")
+        } else {
+            TestServer::new(router).expect("Failed to create test server")
+        };
+
+        (server, temp_file)
+    }
+
+    async fn create_test_server(content: &str) -> (TestServer, NamedTempFile) {
+        create_test_server_impl(content, false)
+    }
+
+    async fn create_test_server_with_http(content: &str) -> (TestServer, NamedTempFile) {
+        create_test_server_impl(content, true)
+    }
+
+    fn create_directory_server_impl(use_http: bool) -> (TestServer, TempDir) {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+
+        fs::write(temp_dir.path().join("test1.md"), TEST_FILE_1_CONTENT)
+            .expect("Failed to write test1.md");
+        fs::write(temp_dir.path().join("test2.markdown"), TEST_FILE_2_CONTENT)
+            .expect("Failed to write test2.markdown");
+        fs::write(temp_dir.path().join("test3.md"), TEST_FILE_3_CONTENT)
+            .expect("Failed to write test3.md");
+
+        let base_dir = temp_dir.path().to_path_buf();
+        let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan markdown files");
+        let is_directory_mode = true;
+
+        let router = new_router(base_dir, tracked_files, is_directory_mode)
+            .expect("Failed to create router");
+
+        let server = if use_http {
+            TestServer::builder()
+                .http_transport()
+                .build(router)
+                .expect("Failed to create test server")
+        } else {
+            TestServer::new(router).expect("Failed to create test server")
+        };
+
+        (server, temp_dir)
+    }
+
+    async fn create_directory_server() -> (TestServer, TempDir) {
+        create_directory_server_impl(false)
+    }
+
+    async fn create_directory_server_with_http() -> (TestServer, TempDir) {
+        create_directory_server_impl(true)
+    }
+
+    #[tokio::test]
+    async fn test_server_starts_and_serves_basic_markdown() {
+        let (server, _temp_file) =
+            create_test_server("# Hello World\n\nThis is **bold** text.").await;
+
+        let response = server.get("/").await;
+
+        assert_eq!(response.status_code(), 200);
+        let body = response.text();
+
+        assert!(body.contains("<h1>Hello World</h1>"));
+        assert!(body.contains("<strong>bold</strong>"));
+        assert!(body.contains("theme-toggle"));
+        assert!(body.contains("openThemeModal"));
+        assert!(body.contains("--bg-color"));
+        assert!(body.contains("data-theme=\"dark\""));
+    }
+
+    #[tokio::test]
+    async fn test_websocket_connection() {
+        let (server, _temp_file) = create_test_server_with_http("# WebSocket Test").await;
+
+        let response = server.get_websocket("/ws").await;
+        response.assert_status_switching_protocols();
+    }
+
+    #[tokio::test]
+    async fn test_file_modification_updates_via_websocket() {
+        let (server, temp_file) = create_test_server_with_http("# Original Content").await;
+
+        let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
+
+        fs::write(&temp_file, "# Modified Content").expect("Failed to modify file");
+
+        tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+        let update_result = tokio::time::timeout(
+            Duration::from_secs(WEBSOCKET_TIMEOUT_SECS),
+            websocket.receive_json::<ServerMessage>(),
+        )
+        .await;
+
+        match update_result {
+            Ok(update_message) => {
+                if let ServerMessage::Reload = update_message {
+                    // Success
+                } else {
+                    panic!("Expected Reload message after file modification");
+                }
+            }
+            Err(_) => {
+                panic!("Timeout waiting for WebSocket update after file modification");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_server_handles_gfm_features() {
+        let markdown_content = r#"# GFM Test
+
+## Table
+| Name | Age |
+|------|-----|
+| John | 30  |
+| Jane | 25  |
+
+## Strikethrough
+~~deleted text~~
+
+## Code block
+```rust
+fn main() {
+    println!("Hello!");
+}
+```
+"#;
+
+        let (server, _temp_file) = create_test_server(markdown_content).await;
+
+        let response = server.get("/").await;
+
+        assert_eq!(response.status_code(), 200);
+        let body = response.text();
+
+        assert!(body.contains("<table>"));
+        assert!(body.contains("<th>Name</th>"));
+        assert!(body.contains("<td>John</td>"));
+        assert!(body.contains("<del>deleted text</del>"));
+        assert!(body.contains("<pre>"));
+        assert!(body.contains("fn main()"));
+    }
+
+    #[tokio::test]
+    async fn test_404_for_unknown_routes() {
+        let (server, _temp_file) = create_test_server("# 404 Test").await;
+
+        let response = server.get("/unknown-route").await;
+
+        assert_eq!(response.status_code(), 404);
+    }
+
+    #[tokio::test]
+    async fn test_image_serving() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+
+        let md_content =
+            "# Test with Image\n\n![Test Image](test.png)\n\nThis markdown references an image.";
+        let md_path = temp_dir.path().join("test.md");
+        fs::write(&md_path, md_content).expect("Failed to write markdown file");
+
+        let png_data = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
+            0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08,
+            0xD7, 0x63, 0xF8, 0x0F, 0x00, 0x00, 0x01, 0x00, 0x01, 0x5C, 0xDD, 0x8D, 0xB4, 0x00,
+            0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        ];
+        let img_path = temp_dir.path().join("test.png");
+        fs::write(&img_path, png_data).expect("Failed to write image file");
+
+        let base_dir = temp_dir.path().to_path_buf();
+        let tracked_files = vec![md_path];
+        let is_directory_mode = false;
+        let router = new_router(base_dir, tracked_files, is_directory_mode)
+            .expect("Failed to create router");
+        let server = TestServer::new(router).expect("Failed to create test server");
+
+        let response = server.get("/").await;
+        assert_eq!(response.status_code(), 200);
+        let body = response.text();
+        assert!(body.contains("<img src=\"test.png\" alt=\"Test Image\""));
+
+        let img_response = server.get("/test.png").await;
+        assert_eq!(img_response.status_code(), 200);
+        assert_eq!(img_response.header("content-type"), "image/png");
+        assert!(!img_response.as_bytes().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_non_image_files_not_served() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+
+        let md_content = "# Test";
+        let md_path = temp_dir.path().join("test.md");
+        fs::write(&md_path, md_content).expect("Failed to write markdown file");
+
+        let txt_path = temp_dir.path().join("secret.txt");
+        fs::write(&txt_path, "secret content").expect("Failed to write txt file");
+
+        let base_dir = temp_dir.path().to_path_buf();
+        let tracked_files = vec![md_path];
+        let is_directory_mode = false;
+        let router = new_router(base_dir, tracked_files, is_directory_mode)
+            .expect("Failed to create router");
+        let server = TestServer::new(router).expect("Failed to create test server");
+
+        let response = server.get("/secret.txt").await;
+        assert_eq!(response.status_code(), 404);
+    }
+
+    #[tokio::test]
+    async fn test_html_tags_in_markdown_are_rendered() {
+        let markdown_content = r#"# HTML Test
+
+This markdown contains HTML tags:
+
+<div class="highlight">
+    <p>This should be rendered as HTML, not escaped</p>
+    <span style="color: red;">Red text</span>
+</div>
+
+Regular **markdown** still works.
+"#;
+
+        let (server, _temp_file) = create_test_server(markdown_content).await;
+
+        let response = server.get("/").await;
+
+        assert_eq!(response.status_code(), 200);
+        let body = response.text();
+
+        assert!(body.contains(r#"<div class="highlight">"#));
+        assert!(body.contains(r#"<span style="color: red;">"#));
+        assert!(body.contains("<p>This should be rendered as HTML, not escaped</p>"));
+        assert!(!body.contains("&lt;div"));
+        assert!(!body.contains("&gt;"));
+        assert!(body.contains("<strong>markdown</strong>"));
+    }
+
+    #[tokio::test]
+    async fn test_mermaid_diagram_detection_and_script_injection() {
+        let markdown_content = r#"# Mermaid Test
+
+Regular content here.
+
+```mermaid
+graph TD
+    A[Start] --> B{Decision}
+    B -->|Yes| C[End]
+    B -->|No| D[Continue]
+```
+
+More regular content.
+
+```javascript
+// This is a regular code block, not mermaid
+console.log("Hello World");
+```
+"#;
+
+        let (server, _temp_file) = create_test_server(markdown_content).await;
+
+        let response = server.get("/").await;
+
+        assert_eq!(response.status_code(), 200);
+        let body = response.text();
+
+        assert!(body.contains(r#"class="language-mermaid""#));
+        assert!(body.contains("graph TD"));
+
+        let has_raw_content = body.contains("A[Start] --> B{Decision}");
+        let has_encoded_content = body.contains("A[Start] --&gt; B{Decision}");
+        assert!(
+            has_raw_content || has_encoded_content,
+            "Expected mermaid content not found in body"
+        );
+
+        assert!(body.contains(r#"<script src="/mermaid.min.js"></script>"#));
+        assert!(body.contains("function initMermaid()"));
+        assert!(body.contains("function transformMermaidCodeBlocks()"));
+        assert!(body.contains("function getMermaidTheme()"));
+        assert!(body.contains(r#"class="language-javascript""#));
+        assert!(body.contains("console.log"));
+    }
+
+    #[tokio::test]
+    async fn test_no_mermaid_script_injection_without_mermaid_blocks() {
+        let markdown_content = r#"# No Mermaid Test
+
+This content has no mermaid diagrams.
+
+```javascript
+console.log("Hello World");
+```
+
+```bash
+echo "Regular code block"
+```
+
+Just regular markdown content.
+"#;
+
+        let (server, _temp_file) = create_test_server(markdown_content).await;
+
+        let response = server.get("/").await;
+
+        assert_eq!(response.status_code(), 200);
+        let body = response.text();
+
+        assert!(!body.contains(r#"<script src="https://cdn.jsdelivr.net/npm/mermaid@11.12.0/dist/mermaid.min.js"></script>"#));
+        assert!(body.contains("function initMermaid()"));
+        assert!(body.contains(r#"class="language-javascript""#));
+        assert!(body.contains(r#"class="language-bash""#));
+    }
+
+    #[tokio::test]
+    async fn test_multiple_mermaid_diagrams() {
+        let markdown_content = r#"# Multiple Mermaid Diagrams
+
+## Flowchart
+```mermaid
+graph LR
+    A --> B
+```
+
+## Sequence Diagram
+```mermaid
+sequenceDiagram
+    Alice->>Bob: Hello
+    Bob-->>Alice: Hi
+```
+
+## Class Diagram
+```mermaid
+classDiagram
+    Animal <|-- Duck
+```
+"#;
+
+        let (server, _temp_file) = create_test_server(markdown_content).await;
+
+        let response = server.get("/").await;
+
+        assert_eq!(response.status_code(), 200);
+        let body = response.text();
+
+        let mermaid_occurrences = body.matches(r#"class="language-mermaid""#).count();
+        assert_eq!(mermaid_occurrences, 3);
+
+        assert!(body.contains("graph LR"));
+        assert!(body.contains("sequenceDiagram"));
+        assert!(body.contains("classDiagram"));
+
+        assert!(body.contains("A --&gt; B") || body.contains("A --> B"));
+        assert!(body.contains("Alice-&gt;&gt;Bob") || body.contains("Alice->>Bob"));
+        assert!(body.contains("Animal &lt;|-- Duck") || body.contains("Animal <|-- Duck"));
+
+        let script_occurrences = body
+            .matches(r#"<script src="/mermaid.min.js"></script>"#)
+            .count();
+        assert_eq!(script_occurrences, 1);
+    }
+
+    #[tokio::test]
+    async fn test_mermaid_js_etag_caching() {
+        let (server, _temp_file) = create_test_server("# Test").await;
+
+        let response = server.get("/mermaid.min.js").await;
+        assert_eq!(response.status_code(), 200);
+
+        let etag = response.header("etag");
+        assert!(!etag.is_empty(), "ETag header should be present");
+
+        let cache_control = response.header("cache-control");
+        let cache_control_str = cache_control.to_str().unwrap();
+        assert!(cache_control_str.contains("public"));
+        assert!(cache_control_str.contains("no-cache"));
+
+        let content_type = response.header("content-type");
+        assert_eq!(content_type, "application/javascript");
+
+        assert!(!response.as_bytes().is_empty());
+
+        let response_304 = server
+            .get("/mermaid.min.js")
+            .add_header(
+                axum::http::header::IF_NONE_MATCH,
+                axum::http::HeaderValue::from_str(etag.to_str().unwrap()).unwrap(),
+            )
+            .await;
+
+        assert_eq!(response_304.status_code(), 304);
+        assert_eq!(response_304.header("etag"), etag);
+        assert!(response_304.as_bytes().is_empty());
+
+        let response_200 = server
+            .get("/mermaid.min.js")
+            .add_header(
+                axum::http::header::IF_NONE_MATCH,
+                axum::http::HeaderValue::from_static("\"different-etag\""),
+            )
+            .await;
+
+        assert_eq!(response_200.status_code(), 200);
+        assert!(!response_200.as_bytes().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_directory_mode_serves_multiple_files() {
+        let (server, _temp_dir) = create_directory_server().await;
+
+        let response1 = server.get("/test1.md").await;
+        assert_eq!(response1.status_code(), 200);
+        let body1 = response1.text();
+        assert!(body1.contains("<h1>Test 1</h1>"));
+        assert!(body1.contains("Content of test1"));
+
+        let response2 = server.get("/test2.markdown").await;
+        assert_eq!(response2.status_code(), 200);
+        let body2 = response2.text();
+        assert!(body2.contains("<h1>Test 2</h1>"));
+        assert!(body2.contains("Content of test2"));
+
+        let response3 = server.get("/test3.md").await;
+        assert_eq!(response3.status_code(), 200);
+        let body3 = response3.text();
+        assert!(body3.contains("<h1>Test 3</h1>"));
+        assert!(body3.contains("Content of test3"));
+    }
+
+    #[tokio::test]
+    async fn test_directory_mode_file_not_found() {
+        let (server, _temp_dir) = create_directory_server().await;
+
+        let response = server.get("/nonexistent.md").await;
+        assert_eq!(response.status_code(), 404);
+    }
+
+    #[tokio::test]
+    async fn test_directory_mode_has_navigation_sidebar() {
+        let (server, _temp_dir) = create_directory_server().await;
+
+        let response = server.get("/test1.md").await;
+        assert_eq!(response.status_code(), 200);
+        let body = response.text();
+
+        assert!(body.contains(r#"<nav class="sidebar">"#));
+        assert!(body.contains(r#"<ul class="file-list">"#));
+        assert!(body.contains("test1.md"));
+        assert!(body.contains("test2.markdown"));
+        assert!(body.contains("test3.md"));
+    }
+
+    #[tokio::test]
+    async fn test_single_file_mode_no_navigation_sidebar() {
+        let (server, _temp_file) = create_test_server("# Single File Test").await;
+
+        let response = server.get("/").await;
+        assert_eq!(response.status_code(), 200);
+        let body = response.text();
+
+        assert!(!body.contains(r#"<nav class="sidebar">"#));
+        assert!(!body.contains("<h3>Files</h3>"));
+        assert!(!body.contains(r#"<ul class="file-list">"#));
+    }
+
+    #[tokio::test]
+    async fn test_directory_mode_active_file_highlighting() {
+        let (server, _temp_dir) = create_directory_server().await;
+
+        let response1 = server.get("/test1.md").await;
+        assert_eq!(response1.status_code(), 200);
+        let body1 = response1.text();
+
+        assert!(
+            body1.contains(r#"href="/test1.md" class="active""#),
+            "test1.md link should have href and class on same line"
+        );
+
+        let active_link_count = body1.matches(r#"class="active""#).count();
+        assert_eq!(active_link_count, 1, "Should have exactly one active link");
+
+        let response2 = server.get("/test2.markdown").await;
+        assert_eq!(response2.status_code(), 200);
+        let body2 = response2.text();
+
+        assert!(
+            body2.contains(r#"href="/test2.markdown" class="active""#),
+            "test2.markdown link should have href and class on same line"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_directory_mode_file_order() {
+        let (server, _temp_dir) = create_directory_server().await;
+
+        let response = server.get("/test1.md").await;
+        assert_eq!(response.status_code(), 200);
+        let body = response.text();
+
+        let test1_pos = body.find("test1.md").expect("test1.md not found");
+        let test2_pos = body
+            .find("test2.markdown")
+            .expect("test2.markdown not found");
+        let test3_pos = body.find("test3.md").expect("test3.md not found");
+
+        assert!(
+            test1_pos < test2_pos,
+            "test1.md should appear before test2.markdown"
+        );
+        assert!(
+            test2_pos < test3_pos,
+            "test2.markdown should appear before test3.md"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_directory_mode_websocket_file_modification() {
+        let (server, temp_dir) = create_directory_server_with_http().await;
+
+        let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
+
+        let test_file = temp_dir.path().join("test1.md");
+        fs::write(&test_file, "# Modified Test 1\n\nContent has changed")
+            .expect("Failed to modify file");
+
+        tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+        let update_result = tokio::time::timeout(
+            Duration::from_secs(WEBSOCKET_TIMEOUT_SECS),
+            websocket.receive_json::<ServerMessage>(),
+        )
+        .await;
+
+        match update_result {
+            Ok(update_message) => {
+                if let ServerMessage::Reload = update_message {
+                    // Success
+                } else {
+                    panic!("Expected Reload message after file modification");
+                }
+            }
+            Err(_) => {
+                panic!("Timeout waiting for WebSocket update after file modification");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_directory_mode_new_file_triggers_reload() {
+        let (server, temp_dir) = create_directory_server_with_http().await;
+
+        let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
+
+        let new_file = temp_dir.path().join("test4.md");
+        fs::write(&new_file, "# Test 4\n\nThis is a new file").expect("Failed to create new file");
+
+        tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+        let update_result = tokio::time::timeout(
+            Duration::from_secs(WEBSOCKET_TIMEOUT_SECS),
+            websocket.receive_json::<ServerMessage>(),
+        )
+        .await;
+
+        match update_result {
+            Ok(update_message) => {
+                if let ServerMessage::Reload = update_message {
+                    // Success
+                } else {
+                    panic!("Expected Reload message after new file creation");
+                }
+            }
+            Err(_) => {
+                panic!("Timeout waiting for WebSocket update after new file creation");
+            }
+        }
+
+        let response = server.get("/test1.md").await;
+        assert_eq!(response.status_code(), 200);
+        let body = response.text();
+
+        assert!(
+            body.contains("test4.md"),
+            "New file should appear in navigation"
+        );
+
+        let new_file_response = server.get("/test4.md").await;
+        assert_eq!(new_file_response.status_code(), 200);
+        let new_file_body = new_file_response.text();
+        assert!(new_file_body.contains("<h1>Test 4</h1>"));
+        assert!(new_file_body.contains("This is a new file"));
+    }
+
+    #[tokio::test]
+    async fn test_editor_save_simulation_single_file_mode() {
+        let (server, temp_file) =
+            create_test_server_with_http("# Original\n\nOriginal content").await;
+
+        let file_path = temp_file.path().to_path_buf();
+        let backup_path = file_path.with_extension("md~");
+
+        let initial_response = server.get("/").await;
+        assert_eq!(initial_response.status_code(), 200);
+        assert!(initial_response.text().contains("Original content"));
+
+        fs::rename(&file_path, &backup_path).expect("Failed to rename to backup");
+
+        tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+        let during_save_response = server.get("/").await;
+        assert_eq!(
+            during_save_response.status_code(),
+            200,
+            "File should not return 404 during editor save"
+        );
+
+        fs::write(&file_path, "# Updated\n\nUpdated content").expect("Failed to write new file");
+
+        tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+        let final_response = server.get("/").await;
+        assert_eq!(final_response.status_code(), 200);
+        let final_body = final_response.text();
+        assert!(
+            final_body.contains("Updated content"),
+            "Should serve updated content after save"
+        );
+        assert!(
+            !final_body.contains("Original content"),
+            "Should not serve old content"
+        );
+
+        let _ = fs::remove_file(&backup_path);
+    }
+
+    #[tokio::test]
+    async fn test_editor_save_simulation_directory_mode() {
+        let (server, temp_dir) = create_directory_server_with_http().await;
+
+        let file_path = temp_dir.path().join("test1.md");
+        let backup_path = temp_dir.path().join("test1.md~");
+
+        let initial_response = server.get("/test1.md").await;
+        assert_eq!(initial_response.status_code(), 200);
+        assert!(initial_response.text().contains("Content of test1"));
+
+        fs::rename(&file_path, &backup_path).expect("Failed to rename to backup");
+
+        tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+        let during_save_response = server.get("/test1.md").await;
+        assert_eq!(
+            during_save_response.status_code(),
+            200,
+            "File should not return 404 during editor save in directory mode"
+        );
+
+        fs::write(&file_path, "# Test 1 Updated\n\nUpdated content")
+            .expect("Failed to write new file");
+
+        tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+        let final_response = server.get("/test1.md").await;
+        assert_eq!(final_response.status_code(), 200);
+        let final_body = final_response.text();
+        assert!(
+            final_body.contains("Updated content"),
+            "Should serve updated content after save"
+        );
+
+        let _ = fs::remove_file(&backup_path);
+    }
+
+    #[tokio::test]
+    async fn test_no_404_during_editor_save_sequence() {
+        let (server, temp_dir) = create_directory_server_with_http().await;
+        let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
+
+        let file_path = temp_dir.path().join("test1.md");
+        let backup_path = temp_dir.path().join("test1.md~");
+
+        fs::rename(&file_path, &backup_path).expect("Failed to rename to backup");
+        tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+        let response_after_rename = server.get("/test1.md").await;
+        assert_eq!(
+            response_after_rename.status_code(),
+            200,
+            "Should not get 404 after rename to backup"
+        );
+
+        fs::write(&file_path, "# Test 1 Updated\n\nNew content").expect("Failed to write new file");
+        tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+        let response_after_create = server.get("/test1.md").await;
+        assert_eq!(
+            response_after_create.status_code(),
+            200,
+            "Should successfully serve after new file created"
+        );
+        assert!(response_after_create.text().contains("New content"));
+
+        let update_result = tokio::time::timeout(
+            Duration::from_secs(WEBSOCKET_TIMEOUT_SECS),
+            websocket.receive_json::<ServerMessage>(),
+        )
+        .await;
+
+        assert!(update_result.is_ok(), "Should receive reload after save");
+
+        let _ = fs::remove_file(&backup_path);
+    }
+
+    #[tokio::test]
+    async fn test_yaml_frontmatter_is_stripped() {
+        let (server, _temp_file) = create_test_server(YAML_FRONTMATTER_CONTENT).await;
+
+        let response = server.get("/").await;
+
+        assert_eq!(response.status_code(), 200);
+        let body = response.text();
+
+        assert!(!body.contains("title: Test Post"));
+        assert!(!body.contains("author: Name"));
+        assert!(body.contains("<h1>Test Post</h1>"));
+    }
+
+    #[tokio::test]
+    async fn test_toml_frontmatter_is_stripped() {
+        let (server, _temp_file) = create_test_server(TOML_FRONTMATTER_CONTENT).await;
+
+        let response = server.get("/").await;
+
+        assert_eq!(response.status_code(), 200);
+        let body = response.text();
+
+        assert!(!body.contains("title = \"Test Post\""));
+        assert!(body.contains("<h1>Test Post</h1>"));
+    }
+
+    #[tokio::test]
+    async fn test_temp_file_rename_triggers_reload_single_file_mode() {
+        let (server, temp_file) =
+            create_test_server_with_http("# Original\n\nOriginal content").await;
+
+        let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
+
+        let file_path = temp_file.path().to_path_buf();
+        let temp_write_path = file_path.with_extension("md.tmp.12345");
+
+        let initial_response = server.get("/").await;
+        assert_eq!(initial_response.status_code(), 200);
+        assert!(
+            initial_response.text().contains("Original content"),
+            "File should be tracked and serving content before edit"
+        );
+
+        fs::write(
+            &temp_write_path,
+            "# Updated\n\nUpdated content via temp file",
+        )
+        .expect("Failed to write temp file");
+
+        tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+        fs::rename(&temp_write_path, &file_path).expect("Failed to rename temp file");
+
+        tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+        let update_result = tokio::time::timeout(
+            Duration::from_secs(WEBSOCKET_TIMEOUT_SECS),
+            websocket.receive_json::<ServerMessage>(),
+        )
+        .await;
+
+        match update_result {
+            Ok(update_message) => {
+                if let ServerMessage::Reload = update_message {
+                    // Success
+                } else {
+                    panic!("Expected Reload message after temp file rename");
+                }
+            }
+            Err(_) => {
+                panic!("Timeout waiting for WebSocket update after temp file rename");
+            }
+        }
+
+        let final_response = server.get("/").await;
+        assert_eq!(final_response.status_code(), 200);
+        let final_body = final_response.text();
+        assert!(
+            final_body.contains("Updated content via temp file"),
+            "Should serve updated content after temp file rename"
+        );
+        assert!(
+            !final_body.contains("Original content"),
+            "Should not serve old content"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_temp_file_rename_triggers_reload_directory_mode() {
+        let (server, temp_dir) = create_directory_server_with_http().await;
+
+        let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
+
+        let file_path = temp_dir.path().join("test1.md");
+        let temp_write_path = temp_dir.path().join("test1.md.tmp.67890");
+
+        let initial_response = server.get("/test1.md").await;
+        assert_eq!(initial_response.status_code(), 200);
+        assert!(
+            initial_response.text().contains("Content of test1"),
+            "File should be tracked and serving content before edit"
+        );
+
+        fs::write(
+            &temp_write_path,
+            "# Test 1 Updated\n\nUpdated via temp file rename",
+        )
+        .expect("Failed to write temp file");
+
+        tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+        fs::rename(&temp_write_path, &file_path).expect("Failed to rename temp file");
+
+        tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+        let update_result = tokio::time::timeout(
+            Duration::from_secs(WEBSOCKET_TIMEOUT_SECS),
+            websocket.receive_json::<ServerMessage>(),
+        )
+        .await;
+
+        match update_result {
+            Ok(update_message) => {
+                if let ServerMessage::Reload = update_message {
+                    // Success
+                } else {
+                    panic!("Expected Reload message after temp file rename in directory mode");
+                }
+            }
+            Err(_) => {
+                panic!(
+                    "Timeout waiting for WebSocket update after temp file rename in directory mode"
+                );
+            }
+        }
+
+        let final_response = server.get("/test1.md").await;
+        assert_eq!(final_response.status_code(), 200);
+        let final_body = final_response.text();
+        assert!(
+            final_body.contains("Updated via temp file rename"),
+            "Should serve updated content after temp file rename"
+        );
+        assert!(
+            !final_body.contains("Content of test1"),
+            "Should not serve old content"
+        );
     }
 }
