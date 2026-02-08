@@ -35,15 +35,16 @@ comfortably within a terminal window.
 ## Workflow
 
 1. Write the markdown file (e.g. `plan.md`).
-2. Start mdserve in the background with `--open` to launch the browser
-   automatically:
-   ```bash
-   mdserve --open plan.md &
+2. Start mdserve using the Bash tool with `run_in_background: true` and
+   the `--open` flag to launch the browser automatically:
+   ```
+   command: mdserve --open plan.md
+   run_in_background: true
    ```
 3. Tell the user the URL (default: http://127.0.0.1:3000).
 4. Continue editing the file - changes reload automatically.
-5. When the task is finished and the preview is no longer needed, kill
-   the background process.
+5. When the task is finished and the preview is no longer needed, stop
+   the background task using `TaskStop` with the task ID.
 
 ## Port conflicts
 
@@ -55,8 +56,9 @@ ss -tlnp | grep :3000
 
 If port 3000 is occupied, pick another port:
 
-```bash
-mdserve --open plan.md --port 3001 &
+```
+command: mdserve --open plan.md --port 3001
+run_in_background: true
 ```
 
 Always tell the user the actual URL including the port you used.
@@ -66,8 +68,9 @@ Always tell the user the actual URL including the port you used.
 When producing multiple related markdown files, serve the parent
 directory instead:
 
-```bash
-mdserve --open docs/ &
+```
+command: mdserve --open docs/
+run_in_background: true
 ```
 
 This gives the user a sidebar to navigate between files. Only the
