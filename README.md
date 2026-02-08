@@ -82,6 +82,34 @@ cp target/release/mdserve <folder in your PATH>
 
 Download the appropriate binary for your platform from the [latest release](https://github.com/jfernandez/mdserve/releases/latest).
 
+## Claude Code Plugin
+
+mdserve includes a [Claude Code plugin](https://code.claude.com/docs/en/plugins-reference.md)
+that teaches the agent when and how to launch markdown previews during coding
+sessions. With the plugin installed, Claude Code will automatically serve
+markdown files when the content benefits from rendered presentation (tables,
+diagrams, long documents) and skip the preview for short responses that read
+fine in the terminal.
+
+### Install the plugin
+
+In Claude Code, run:
+
+```
+/plugin install mdserve@mdserve
+```
+
+This installs to user scope by default (available across all projects). To
+install at a different scope:
+
+```
+/plugin install mdserve@mdserve --scope project   # for all collaborators
+/plugin install mdserve@mdserve --scope local      # for yourself in this repo
+```
+
+> **Note:** The `mdserve` binary must also be installed on your system (see
+> [Installation](#installation) above).
+
 ## Usage
 
 ### Basic Usage
