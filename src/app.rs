@@ -334,9 +334,13 @@ pub(crate) async fn serve_markdown(
     let first_file = tracked_files.first().cloned();
     let router = new_router(base_dir.clone(), tracked_files, is_directory_mode)?;
 
-    let listener = TcpListener::bind((hostname, port)).await?;
+    let (listener, actual_port) = bind_with_port_increment(hostname, port).await?;
 
-    let listen_addr = format_host(hostname, port);
+    if actual_port != port {
+        println!("⚠️  Port {port} in use, using {actual_port} instead");
+    }
+
+    let listen_addr = format_host(hostname, actual_port);
 
     if is_directory_mode {
         println!("📁 Serving markdown files from: {}", base_dir.display());
@@ -349,13 +353,34 @@ pub(crate) async fn serve_markdown(
     println!("\nPress Ctrl+C to stop the server");
 
     if open {
-        let browse_addr = format_host(&browsable_host(hostname), port);
+        let browse_addr = format_host(&browsable_host(hostname), actual_port);
         open_browser(&format!("http://{browse_addr}"))?;
     }
 
     axum::serve(listener, router).await?;
 
     Ok(())
+}
+
+const MAX_PORT_ATTEMPTS: u16 = 100;
+
+async fn bind_with_port_increment(hostname: &str, start_port: u16) -> Result<(TcpListener, u16)> {
+    let mut port = start_port;
+    loop {
+        match TcpListener::bind((hostname, port)).await {
+            Ok(listener) => return Ok((listener, port)),
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                let next = port.checked_add(1).context("port range exhausted")?;
+                if next - start_port >= MAX_PORT_ATTEMPTS {
+                    anyhow::bail!(
+                        "no available port found after trying {start_port}-{port}"
+                    );
+                }
+                port = next;
+            }
+            Err(e) => return Err(e).context(format!("failed to bind to {hostname}:{port}")),
+        }
+    }
 }
 
 /// Format the host address (hostname + port) for printing.
@@ -1742,5 +1767,63 @@ classDiagram
             !final_body.contains("Content of test1"),
             "Should not serve old content"
         );
+    }
+
+    #[tokio::test]
+    async fn test_bind_with_port_increment_finds_free_port() {
+        // occupy a port, then verify bind_with_port_increment skips it
+        let blocker = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let blocked_port = blocker.local_addr().unwrap().port();
+
+        let (listener, actual_port) =
+            bind_with_port_increment("127.0.0.1", blocked_port).await.unwrap();
+
+        assert!(actual_port > blocked_port, "should have incremented past blocked port");
+        assert_eq!(listener.local_addr().unwrap().port(), actual_port);
+    }
+
+    #[tokio::test]
+    async fn test_bind_with_port_increment_uses_requested_port_when_free() {
+        // bind to 0 to get an OS-assigned port, then drop it so it's free
+        let tmp = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let free_port = tmp.local_addr().unwrap().port();
+        drop(tmp);
+
+        let (listener, actual_port) =
+            bind_with_port_increment("127.0.0.1", free_port).await.unwrap();
+
+        assert_eq!(actual_port, free_port);
+        assert_eq!(listener.local_addr().unwrap().port(), free_port);
+    }
+
+    #[tokio::test]
+    async fn test_bind_with_port_increment_skips_multiple_occupied_ports() {
+        // find three consecutive free ports by binding to 0 and checking adjacency
+        let mut blockers = Vec::new();
+        let mut base_port = None;
+
+        // try a few times to find three consecutive bindable ports
+        for _ in 0..20 {
+            let l1 = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let p = l1.local_addr().unwrap().port();
+            if let (Ok(l2), Ok(l3)) = (
+                TcpListener::bind(("127.0.0.1", p + 1)).await,
+                TcpListener::bind(("127.0.0.1", p + 2)).await,
+            ) {
+                blockers.extend([l1, l2, l3]);
+                base_port = Some(p);
+                break;
+            }
+        }
+
+        let base_port = base_port.expect("could not find three consecutive free ports");
+
+        let (listener, actual_port) =
+            bind_with_port_increment("127.0.0.1", base_port).await.unwrap();
+
+        assert!(actual_port >= base_port + 3, "should skip all three blocked ports");
+        assert_eq!(listener.local_addr().unwrap().port(), actual_port);
+
+        drop(blockers);
     }
 }
