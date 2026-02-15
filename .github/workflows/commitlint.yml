@@ -1,0 +1,59 @@
+name: Lint Commit Messages
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  commitlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Fetch base branch
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.ref }}
+
+      - name: Validate commit messages
+        run: |
+          # Get all commits in this PR
+          commits=$(git log --format=%H origin/${{ github.event.pull_request.base.ref }}..HEAD)
+          
+          echo "Checking commit messages for conventional commit format..."
+          echo ""
+          
+          failed=0
+          for commit in $commits; do
+            msg=$(git log --format=%s -n 1 $commit)
+            
+            # Check if message matches conventional commit format
+            # Format: type(optional-scope): description
+            # Types: feat, fix, docs, chore, refactor, test, ci, perf, style, revert
+            if echo "$msg" | grep -qE '^(feat|fix|docs|chore|refactor|test|ci|perf|style|revert)(\(.+\))?: .+'; then
+              echo "✅ $msg"
+            else
+              echo "❌ $msg"
+              echo "   ^ Does not match conventional commit format"
+              failed=1
+            fi
+          done
+          
+          echo ""
+          if [ $failed -eq 1 ]; then
+            echo "❌ One or more commits do not follow conventional commit format."
+            echo ""
+            echo "Expected format: type(optional-scope): description"
+            echo "Valid types: feat, fix, docs, chore, refactor, test, ci, perf, style, revert"
+            echo ""
+            echo "Examples:"
+            echo "  feat: add support for subdirectory images"
+            echo "  fix: resolve websocket connection timeout"
+            echo "  docs: update installation instructions"
+            echo "  chore(deps): update axum to 0.7"
+            exit 1
+          fi
+          
+          echo "✅ All commits follow conventional commit format"

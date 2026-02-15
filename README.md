@@ -185,7 +185,8 @@ that push mdserve toward being a documentation platform or a configurable server
 are out of scope.
 
 We use [conventional commits](https://www.conventionalcommits.org/) (`feat:`,
-`fix:`, `chore:`, etc.). PRs that don't follow this style will not be merged.
+`fix:`, `chore:`, etc.). All commits are automatically validated against this
+format in CI. See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ## License
 
