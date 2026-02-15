@@ -314,7 +314,7 @@ fn new_router(
         .route("/", get(serve_html_root))
         .route("/ws", get(websocket_handler))
         .route("/mermaid.min.js", get(serve_mermaid_js))
-        .route("/:filename", get(serve_file))
+        .route("/*filename", get(serve_file))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
