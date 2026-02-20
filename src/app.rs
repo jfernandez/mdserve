@@ -31,6 +31,91 @@ static TEMPLATE_ENV: OnceLock<Environment<'static>> = OnceLock::new();
 const MERMAID_JS: &str = include_str!("../static/js/mermaid.min.js");
 const MERMAID_ETAG: &str = concat!("\"", env!("CARGO_PKG_VERSION"), "\"");
 
+const HEADING_TAGS: [&str; 6] = ["<h1>", "<h2>", "<h3>", "<h4>", "<h5>", "<h6>"];
+
+fn add_heading_ids(html: &str) -> String {
+    let mut seen_ids: HashMap<String, usize> = HashMap::new();
+    let mut result = String::with_capacity(html.len());
+    let mut rest = html;
+
+    while !rest.is_empty() {
+        let found = HEADING_TAGS
+            .iter()
+            .filter_map(|open| rest.find(open).map(|pos| (pos, open)))
+            .min_by_key(|(pos, _)| *pos);
+
+        let Some((pos, open_tag)) = found else {
+            result.push_str(rest);
+            break;
+        };
+
+        result.push_str(&rest[..pos]);
+        rest = &rest[pos + open_tag.len()..];
+
+        let level = &open_tag[2..3];
+        let close_tag = &open_tag.replace('<', "</");
+
+        let Some(end) = rest.find(close_tag.as_str()) else {
+            result.push_str(open_tag);
+            continue;
+        };
+
+        let content = &rest[..end];
+        let text = strip_html_tags(content);
+        let slug = generate_slug(&text);
+
+        let id = match seen_ids.get(&slug) {
+            Some(&count) => {
+                seen_ids.insert(slug.clone(), count + 1);
+                format!("{slug}-{count}")
+            }
+            None => {
+                seen_ids.insert(slug.clone(), 1);
+                slug
+            }
+        };
+
+        result.push_str(&format!("<h{level} id=\"{id}\">{content}</h{level}>"));
+        rest = &rest[end + close_tag.len()..];
+    }
+
+    result
+}
+
+fn strip_html_tags(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for c in s.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn generate_slug(text: &str) -> String {
+    text.to_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() {
+                c
+            } else if c.is_whitespace() || c == '-' || c == '_' {
+                '-'
+            } else {
+                '\0'
+            }
+        })
+        .filter(|&c| c != '\0')
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
 type SharedMarkdownState = Arc<Mutex<MarkdownState>>;
 
 fn template_env() -> &'static Environment<'static> {
@@ -180,7 +265,9 @@ impl MarkdownState {
         let html_body = markdown::to_html_with_options(content, &options)
             .unwrap_or_else(|_| "Error parsing markdown".to_string());
 
-        Ok(html_body)
+        let html_with_ids = add_heading_ids(&html_body);
+
+        Ok(html_with_ids)
     }
 }
 
@@ -837,6 +924,43 @@ mod tests {
         assert_eq!(browsable_host("example.com"), "example.com");
     }
 
+    #[test]
+    fn test_generate_slug() {
+        assert_eq!(generate_slug("Hello World"), "hello-world");
+        assert_eq!(generate_slug("Getting Started"), "getting-started");
+        assert_eq!(generate_slug("API Reference"), "api-reference");
+        assert_eq!(generate_slug("What's New?"), "whats-new");
+        assert_eq!(generate_slug("C++ Programming"), "c-programming");
+        assert_eq!(generate_slug("  Multiple   Spaces  "), "multiple-spaces");
+        assert_eq!(generate_slug("already-kebab-case"), "already-kebab-case");
+        assert_eq!(generate_slug("MixedCase"), "mixedcase");
+        assert_eq!(generate_slug("123 Numbers"), "123-numbers");
+    }
+
+    #[test]
+    fn test_add_heading_ids() {
+        let html = "<h1>Introduction</h1><p>Some text</p><h2>Getting Started</h2>";
+        let result = add_heading_ids(html);
+        assert!(result.contains("<h1 id=\"introduction\">Introduction</h1>"));
+        assert!(result.contains("<h2 id=\"getting-started\">Getting Started</h2>"));
+    }
+
+    #[test]
+    fn test_add_heading_ids_with_duplicates() {
+        let html = "<h2>Section</h2><h2>Section</h2><h2>Section</h2>";
+        let result = add_heading_ids(html);
+        assert!(result.contains("<h2 id=\"section\">Section</h2>"));
+        assert!(result.contains("<h2 id=\"section-1\">Section</h2>"));
+        assert!(result.contains("<h2 id=\"section-2\">Section</h2>"));
+    }
+
+    #[test]
+    fn test_add_heading_ids_with_nested_html() {
+        let html = "<h1>Hello <strong>World</strong></h1>";
+        let result = add_heading_ids(html);
+        assert!(result.contains("<h1 id=\"hello-world\">Hello <strong>World</strong></h1>"));
+    }
+
     use axum_test::TestServer;
     use std::time::Duration;
     use tempfile::{Builder, NamedTempFile, TempDir};
@@ -940,7 +1064,7 @@ mod tests {
         assert_eq!(response.status_code(), 200);
         let body = response.text();
 
-        assert!(body.contains("<h1>Hello World</h1>"));
+        assert!(body.contains(">Hello World</h1>"));
         assert!(body.contains("<strong>bold</strong>"));
         assert!(body.contains("theme-toggle"));
         assert!(body.contains("openThemeModal"));
@@ -1294,19 +1418,19 @@ classDiagram
         let response1 = server.get("/test1.md").await;
         assert_eq!(response1.status_code(), 200);
         let body1 = response1.text();
-        assert!(body1.contains("<h1>Test 1</h1>"));
+        assert!(body1.contains(">Test 1</h1>"));
         assert!(body1.contains("Content of test1"));
 
         let response2 = server.get("/test2.markdown").await;
         assert_eq!(response2.status_code(), 200);
         let body2 = response2.text();
-        assert!(body2.contains("<h1>Test 2</h1>"));
+        assert!(body2.contains(">Test 2</h1>"));
         assert!(body2.contains("Content of test2"));
 
         let response3 = server.get("/test3.md").await;
         assert_eq!(response3.status_code(), 200);
         let body3 = response3.text();
-        assert!(body3.contains("<h1>Test 3</h1>"));
+        assert!(body3.contains(">Test 3</h1>"));
         assert!(body3.contains("Content of test3"));
     }
 
@@ -1470,7 +1594,7 @@ classDiagram
         let new_file_response = server.get("/test4.md").await;
         assert_eq!(new_file_response.status_code(), 200);
         let new_file_body = new_file_response.text();
-        assert!(new_file_body.contains("<h1>Test 4</h1>"));
+        assert!(new_file_body.contains(">Test 4</h1>"));
         assert!(new_file_body.contains("This is a new file"));
     }
 
@@ -1605,7 +1729,7 @@ classDiagram
 
         assert!(!body.contains("title: Test Post"));
         assert!(!body.contains("author: Name"));
-        assert!(body.contains("<h1>Test Post</h1>"));
+        assert!(body.contains(">Test Post</h1>"));
     }
 
     #[tokio::test]
@@ -1618,7 +1742,7 @@ classDiagram
         let body = response.text();
 
         assert!(!body.contains("title = \"Test Post\""));
-        assert!(body.contains("<h1>Test Post</h1>"));
+        assert!(body.contains(">Test Post</h1>"));
     }
 
     #[tokio::test]
