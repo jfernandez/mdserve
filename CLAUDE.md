@@ -53,3 +53,9 @@ Use conventional commits: `type: lowercase description` (e.g. `feat:`, `fix:`,
 `chore:`, `docs:`, `refactor:`, `test:`). No scopes, no emojis. Subject line
 max 72 chars, imperative mood. Body optional, wrap at 72 chars, explain why not
 what.
+
+Do not add AI attribution to commit messages.
+
+## Pull requests
+
+Do not add AI attribution to PR descriptions.
