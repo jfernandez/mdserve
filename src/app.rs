@@ -31,13 +31,7 @@ static TEMPLATE_ENV: OnceLock<Environment<'static>> = OnceLock::new();
 const MERMAID_JS: &str = include_str!("../static/js/mermaid.min.js");
 const MERMAID_ETAG: &str = concat!("\"", env!("CARGO_PKG_VERSION"), "\"");
 
-const EXCLUDED_DIRS: &[&str] = &[
-    "node_modules",
-    "target",
-    "__pycache__",
-    "dist",
-    "build",
-];
+const EXCLUDED_DIRS: &[&str] = &["node_modules", "target", "__pycache__", "dist", "build"];
 
 fn is_excluded_dir(name: &str) -> bool {
     name.starts_with('.') || EXCLUDED_DIRS.contains(&name)
@@ -388,8 +382,10 @@ async fn handle_file_event(event: Event, state: &SharedMarkdownState) {
                         | notify::EventKind::Create(_)
                         | notify::EventKind::Remove(_) => {
                             let state_guard = state.lock().await;
-                            let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-                            if let Ok(rel_path) = canonical_path.strip_prefix(&state_guard.base_dir) {
+                            let canonical_path =
+                                path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+                            if let Ok(rel_path) = canonical_path.strip_prefix(&state_guard.base_dir)
+                            {
                                 if has_excluded_component(rel_path) {
                                     continue;
                                 }
@@ -989,13 +985,25 @@ mod tests {
 
     #[test]
     fn test_has_excluded_component() {
-        assert!(has_excluded_component(Path::new("/tmp/project/node_modules/README.md")));
-        assert!(has_excluded_component(Path::new("/tmp/project/.git/config")));
-        assert!(has_excluded_component(Path::new("/tmp/project/target/debug/build.md")));
-        assert!(has_excluded_component(Path::new("/tmp/project/.hidden/notes.md")));
+        assert!(has_excluded_component(Path::new(
+            "/tmp/project/node_modules/README.md"
+        )));
+        assert!(has_excluded_component(Path::new(
+            "/tmp/project/.git/config"
+        )));
+        assert!(has_excluded_component(Path::new(
+            "/tmp/project/target/debug/build.md"
+        )));
+        assert!(has_excluded_component(Path::new(
+            "/tmp/project/.hidden/notes.md"
+        )));
 
-        assert!(!has_excluded_component(Path::new("/tmp/project/docs/guide.md")));
-        assert!(!has_excluded_component(Path::new("/tmp/project/src/main.rs")));
+        assert!(!has_excluded_component(Path::new(
+            "/tmp/project/docs/guide.md"
+        )));
+        assert!(!has_excluded_component(Path::new(
+            "/tmp/project/src/main.rs"
+        )));
         assert!(!has_excluded_component(Path::new("/tmp/project/README.md")));
     }
 
@@ -1956,8 +1964,7 @@ classDiagram
 
         let sub_dir = temp_dir.path().join("docs");
         fs::create_dir(&sub_dir).expect("Failed to create subdir");
-        fs::write(sub_dir.join("guide.md"), "# Guide\n\nGuide content")
-            .expect("Failed to write");
+        fs::write(sub_dir.join("guide.md"), "# Guide\n\nGuide content").expect("Failed to write");
 
         let base_dir = temp_dir.path().to_path_buf();
         let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan");
@@ -1977,10 +1984,7 @@ classDiagram
 
     #[test]
     fn test_build_file_tree_flat_files() {
-        let paths = vec![
-            "CHANGELOG.md".to_string(),
-            "README.md".to_string(),
-        ];
+        let paths = vec!["CHANGELOG.md".to_string(), "README.md".to_string()];
         let tree = build_file_tree(&paths);
 
         assert_eq!(tree.len(), 2);
@@ -2034,5 +2038,67 @@ classDiagram
         let paths: Vec<String> = vec![];
         let tree = build_file_tree(&paths);
         assert!(tree.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_directory_mode_subdirectory_navigation() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+
+        fs::write(temp_dir.path().join("README.md"), "# Root").expect("Failed to write");
+
+        let docs_dir = temp_dir.path().join("docs");
+        fs::create_dir(&docs_dir).expect("Failed to create docs dir");
+        fs::write(docs_dir.join("guide.md"), "# Guide\n\nGuide content").expect("Failed to write");
+
+        let base_dir = temp_dir.path().to_path_buf();
+        let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan");
+        let router = new_router(base_dir, tracked_files, true).expect("Failed to create router");
+        let server = TestServer::new(router).expect("Failed to create test server");
+
+        // Check sidebar contains directory and file
+        let response = server.get("/README.md").await;
+        assert_eq!(response.status_code(), 200);
+        let body = response.text();
+        assert!(
+            body.contains("docs"),
+            "Sidebar should contain 'docs' directory"
+        );
+        assert!(
+            body.contains("guide.md"),
+            "Sidebar should contain 'guide.md'"
+        );
+        assert!(
+            body.contains(r#"href="/docs/guide.md""#),
+            "Should link to /docs/guide.md"
+        );
+
+        // Serve subdirectory file
+        let response = server.get("/docs/guide.md").await;
+        assert_eq!(response.status_code(), 200);
+        assert!(response.text().contains("Guide content"));
+    }
+
+    #[tokio::test]
+    async fn test_subdirectory_active_file_highlighting() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+
+        fs::write(temp_dir.path().join("README.md"), "# Root").expect("Failed to write");
+
+        let docs_dir = temp_dir.path().join("docs");
+        fs::create_dir(&docs_dir).expect("Failed to create docs dir");
+        fs::write(docs_dir.join("guide.md"), "# Guide").expect("Failed to write");
+
+        let base_dir = temp_dir.path().to_path_buf();
+        let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan");
+        let router = new_router(base_dir, tracked_files, true).expect("Failed to create router");
+        let server = TestServer::new(router).expect("Failed to create test server");
+
+        let response = server.get("/docs/guide.md").await;
+        assert_eq!(response.status_code(), 200);
+        let body = response.text();
+        assert!(
+            body.contains(r#"href="/docs/guide.md" class="active""#),
+            "Subdirectory file should be marked active"
+        );
     }
 }

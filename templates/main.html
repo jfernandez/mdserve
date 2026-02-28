@@ -826,7 +826,7 @@
             </li>
             {% else %}
             <li class="tree-file" data-depth="{{ loop.depth0 }}">
-                <a href="/{{ entry.path }}"{% if entry.path == current_file %} class="active"{% endif %}>
+                <a href="/{{ entry.path|safe }}"{% if entry.path == current_file %} class="active"{% endif %}>
                     {{ entry.name }}
                 </a>
             </li>
