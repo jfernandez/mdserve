@@ -715,8 +715,8 @@
         function saveDirState() {
             var collapsed = [];
             document.querySelectorAll('.tree-dir.collapsed').forEach(function(el) {
-                var name = el.querySelector('.dir-name').textContent;
-                collapsed.push(name);
+                var path = el.getAttribute('data-path');
+                if (path) collapsed.push(path);
             });
             localStorage.setItem('collapsed-dirs', JSON.stringify(collapsed));
         }
@@ -727,8 +727,8 @@
             try {
                 var collapsed = JSON.parse(saved);
                 document.querySelectorAll('.tree-dir').forEach(function(el) {
-                    var name = el.querySelector('.dir-name').textContent;
-                    if (collapsed.indexOf(name) !== -1) {
+                    var path = el.getAttribute('data-path');
+                    if (path && collapsed.indexOf(path) !== -1) {
                         el.classList.add('collapsed');
                     }
                 });
@@ -815,7 +815,7 @@
         <ul class="file-list file-tree" data-depth="0">
             {% for entry in tree recursive %}
             {% if entry.is_dir %}
-            <li class="tree-dir" data-depth="{{ loop.depth0 }}">
+            <li class="tree-dir" data-depth="{{ loop.depth0 }}" data-path="{{ entry.path }}">
                 <div class="dir-header" onclick="toggleDir(this)">
                     <span class="dir-chevron">&#9660;</span>
                     <span class="dir-name">{{ entry.name }}</span>

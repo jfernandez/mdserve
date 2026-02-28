@@ -158,9 +158,15 @@ fn insert_into_tree(entries: &mut Vec<TreeEntry>, parts: &[&str], full_path: &st
     if let Some(dir_entry) = existing {
         insert_into_tree(&mut dir_entry.children, &parts[1..], full_path);
     } else {
+        let depth = full_path.split('/').count() - parts.len();
+        let dir_path: String = full_path
+            .split('/')
+            .take(depth + 1)
+            .collect::<Vec<_>>()
+            .join("/");
         let mut new_dir = TreeEntry {
             name: dir_name.to_string(),
-            path: String::new(),
+            path: dir_path,
             is_dir: true,
             children: Vec::new(),
         };
@@ -2012,12 +2018,14 @@ classDiagram
         let docs = &tree[0];
         assert_eq!(docs.name, "docs");
         assert!(docs.is_dir);
+        assert_eq!(docs.path, "docs");
         assert_eq!(docs.children.len(), 2);
 
         // docs/ children: api/ dir first, then guide.md file
         let api = &docs.children[0];
         assert_eq!(api.name, "api");
         assert!(api.is_dir);
+        assert_eq!(api.path, "docs/api");
         assert_eq!(api.children.len(), 1);
         assert_eq!(api.children[0].name, "reference.md");
         assert_eq!(api.children[0].path, "docs/api/reference.md");
