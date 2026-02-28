@@ -71,19 +71,27 @@ use std::collections::HashMap;
 
 pub(crate) fn scan_markdown_files(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut md_files = Vec::new();
+    scan_markdown_files_recursive(dir, &mut md_files)?;
+    md_files.sort();
+    Ok(md_files)
+}
 
+fn scan_markdown_files_recursive(dir: &Path, md_files: &mut Vec<PathBuf>) -> Result<()> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
 
-        if path.is_file() && is_markdown_file(&path) {
+        if path.is_dir() {
+            let dir_name = entry.file_name();
+            let dir_name = dir_name.to_string_lossy();
+            if !is_excluded_dir(&dir_name) {
+                scan_markdown_files_recursive(&path, md_files)?;
+            }
+        } else if path.is_file() && is_markdown_file(&path) {
             md_files.push(path);
         }
     }
-
-    md_files.sort();
-
-    Ok(md_files)
+    Ok(())
 }
 
 fn is_markdown_file(path: &Path) -> bool {
@@ -797,19 +805,67 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_markdown_files_ignores_subdirectories() {
+    fn test_scan_markdown_files_finds_subdirectory_files() {
         let temp_dir = tempdir().expect("Failed to create temp dir");
 
         fs::write(temp_dir.path().join("root.md"), "# Root").expect("Failed to write");
 
-        let sub_dir = temp_dir.path().join("subdir");
+        let sub_dir = temp_dir.path().join("docs");
         fs::create_dir(&sub_dir).expect("Failed to create subdir");
         fs::write(sub_dir.join("nested.md"), "# Nested").expect("Failed to write");
 
+        let deep_dir = sub_dir.join("api");
+        fs::create_dir(&deep_dir).expect("Failed to create deep dir");
+        fs::write(deep_dir.join("reference.md"), "# Reference").expect("Failed to write");
+
         let result = scan_markdown_files(temp_dir.path()).expect("Failed to scan");
 
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].file_name().unwrap().to_str().unwrap(), "root.md");
+        assert_eq!(result.len(), 3);
+
+        let rel_paths: Vec<_> = result
+            .iter()
+            .map(|p| {
+                p.strip_prefix(temp_dir.path())
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect();
+        assert!(rel_paths.contains(&"root.md".to_string()));
+        assert!(rel_paths.contains(&"docs/nested.md".to_string()));
+        assert!(rel_paths.contains(&"docs/api/reference.md".to_string()));
+    }
+
+    #[test]
+    fn test_scan_markdown_files_excludes_hidden_and_build_dirs() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+
+        fs::write(temp_dir.path().join("root.md"), "# Root").expect("Failed to write");
+
+        for dir_name in &[".git", "node_modules", "target", ".venv", "__pycache__"] {
+            let excluded = temp_dir.path().join(dir_name);
+            fs::create_dir(&excluded).expect("Failed to create dir");
+            fs::write(excluded.join("hidden.md"), "# Hidden").expect("Failed to write");
+        }
+
+        let docs = temp_dir.path().join("docs");
+        fs::create_dir(&docs).expect("Failed to create docs dir");
+        fs::write(docs.join("visible.md"), "# Visible").expect("Failed to write");
+
+        let result = scan_markdown_files(temp_dir.path()).expect("Failed to scan");
+
+        assert_eq!(result.len(), 2);
+        let rel_paths: Vec<_> = result
+            .iter()
+            .map(|p| {
+                p.strip_prefix(temp_dir.path())
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect();
+        assert!(rel_paths.contains(&"root.md".to_string()));
+        assert!(rel_paths.contains(&"docs/visible.md".to_string()));
     }
 
     #[test]
