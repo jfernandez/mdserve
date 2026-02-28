@@ -43,6 +43,20 @@ fn is_excluded_dir(name: &str) -> bool {
     name.starts_with('.') || EXCLUDED_DIRS.contains(&name)
 }
 
+fn has_excluded_component(path: &Path) -> bool {
+    // Only check parent directory components, not the final filename
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    parent.components().any(|c| {
+        if let std::path::Component::Normal(name) = c {
+            is_excluded_dir(&name.to_string_lossy())
+        } else {
+            false
+        }
+    })
+}
+
 type SharedMarkdownState = Arc<Mutex<MarkdownState>>;
 
 fn template_env() -> &'static Environment<'static> {
@@ -232,6 +246,10 @@ async fn handle_markdown_file_change(path: &Path, state: &SharedMarkdownState) {
         return;
     };
 
+    if has_excluded_component(Path::new(&filename)) {
+        return;
+    }
+
     // If file is already tracked, refresh its content
     if state_guard.tracked_files.contains_key(&filename) {
         if state_guard.refresh_file(&filename).is_ok() {
@@ -300,6 +318,12 @@ async fn handle_file_event(event: Event, state: &SharedMarkdownState) {
                         | notify::EventKind::Create(_)
                         | notify::EventKind::Remove(_) => {
                             let state_guard = state.lock().await;
+                            let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+                            if let Ok(rel_path) = canonical_path.strip_prefix(&state_guard.base_dir) {
+                                if has_excluded_component(rel_path) {
+                                    continue;
+                                }
+                            }
                             let _ = state_guard.change_tx.send(ServerMessage::Reload);
                         }
                         _ => {}
@@ -335,7 +359,12 @@ fn new_router(
         Config::default(),
     )?;
 
-    watcher.watch(&base_dir, RecursiveMode::NonRecursive)?;
+    let recursive_mode = if is_directory_mode {
+        RecursiveMode::Recursive
+    } else {
+        RecursiveMode::NonRecursive
+    };
+    watcher.watch(&base_dir, recursive_mode)?;
 
     tokio::spawn(async move {
         let _watcher = watcher;
@@ -894,6 +923,18 @@ mod tests {
         let result = scan_markdown_files(temp_dir.path()).expect("Failed to scan");
 
         assert_eq!(result.len(), 4);
+    }
+
+    #[test]
+    fn test_has_excluded_component() {
+        assert!(has_excluded_component(Path::new("/tmp/project/node_modules/README.md")));
+        assert!(has_excluded_component(Path::new("/tmp/project/.git/config")));
+        assert!(has_excluded_component(Path::new("/tmp/project/target/debug/build.md")));
+        assert!(has_excluded_component(Path::new("/tmp/project/.hidden/notes.md")));
+
+        assert!(!has_excluded_component(Path::new("/tmp/project/docs/guide.md")));
+        assert!(!has_excluded_component(Path::new("/tmp/project/src/main.rs")));
+        assert!(!has_excluded_component(Path::new("/tmp/project/README.md")));
     }
 
     #[test]
