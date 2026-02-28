@@ -616,22 +616,14 @@ async fn render_markdown(state: &MarkdownState, current_file: &str) -> (StatusCo
 
     let rendered = if state.show_navigation() {
         let filenames = state.get_sorted_filenames();
-        let files: Vec<Value> = filenames
-            .iter()
-            .map(|name| {
-                Value::from_object({
-                    let mut map = std::collections::HashMap::new();
-                    map.insert("name".to_string(), Value::from(name.clone()));
-                    map
-                })
-            })
-            .collect();
+        let tree = build_file_tree(&filenames);
+        let tree_value = Value::from_serialize(&tree);
 
         match template.render(context! {
             content => content,
             mermaid_enabled => has_mermaid,
             show_navigation => true,
-            files => files,
+            tree => tree_value,
             current_file => current_file,
         }) {
             Ok(r) => r,
