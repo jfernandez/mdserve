@@ -31,8 +31,10 @@ minijinja-embed (changes to `templates/` require a rebuild).
   during coding sessions. Features that push it toward a documentation platform,
   configurable server, or deployment target are out of scope.
 - **Zero config.** `mdserve file.md` must work with no flags or config files.
-- **Non-recursive.** Directory mode watches only the immediate directory, never
-  subdirectories. This is intentional.
+- **Recursive with exclusions.** Directory mode recursively scans
+  subdirectories for markdown files. Hidden directories (starting with `.`)
+  and common build directories (`node_modules`, `target`, etc.) are excluded.
+  A client-side toggle can switch to flat (root-only) view.
 - **Pre-rendered in memory.** All tracked files are rendered to HTML on startup
   and on change. Serving is always from memory.
 - **Minimal client-side JS.** Most logic is server-side. Client JS handles
