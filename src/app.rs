@@ -121,6 +121,76 @@ struct TrackedFile {
     html: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct TreeEntry {
+    name: String,
+    path: String,
+    is_dir: bool,
+    children: Vec<TreeEntry>,
+}
+
+fn build_file_tree(paths: &[String]) -> Vec<TreeEntry> {
+    let mut root_children: Vec<TreeEntry> = Vec::new();
+
+    for path in paths {
+        let parts: Vec<&str> = path.split('/').collect();
+        insert_into_tree(&mut root_children, &parts, path);
+    }
+
+    sort_tree(&mut root_children);
+    root_children
+}
+
+fn insert_into_tree(entries: &mut Vec<TreeEntry>, parts: &[&str], full_path: &str) {
+    if parts.is_empty() {
+        return;
+    }
+
+    if parts.len() == 1 {
+        // Leaf file
+        entries.push(TreeEntry {
+            name: parts[0].to_string(),
+            path: full_path.to_string(),
+            is_dir: false,
+            children: Vec::new(),
+        });
+        return;
+    }
+
+    // Directory part — find or create
+    let dir_name = parts[0];
+    let existing = entries.iter_mut().find(|e| e.is_dir && e.name == dir_name);
+
+    if let Some(dir_entry) = existing {
+        insert_into_tree(&mut dir_entry.children, &parts[1..], full_path);
+    } else {
+        let mut new_dir = TreeEntry {
+            name: dir_name.to_string(),
+            path: String::new(),
+            is_dir: true,
+            children: Vec::new(),
+        };
+        insert_into_tree(&mut new_dir.children, &parts[1..], full_path);
+        entries.push(new_dir);
+    }
+}
+
+fn sort_tree(entries: &mut [TreeEntry]) {
+    entries.sort_by(|a, b| {
+        // Directories first, then files, alphabetical within each group
+        match (a.is_dir, b.is_dir) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+        }
+    });
+    for entry in entries.iter_mut() {
+        if entry.is_dir {
+            sort_tree(&mut entry.children);
+        }
+    }
+}
+
 struct MarkdownState {
     base_dir: PathBuf,
     tracked_files: HashMap<String, TrackedFile>,
@@ -1911,5 +1981,66 @@ classDiagram
         let response = server.get("/docs/guide.md").await;
         assert_eq!(response.status_code(), 200);
         assert!(response.text().contains("Guide content"));
+    }
+
+    #[test]
+    fn test_build_file_tree_flat_files() {
+        let paths = vec![
+            "CHANGELOG.md".to_string(),
+            "README.md".to_string(),
+        ];
+        let tree = build_file_tree(&paths);
+
+        assert_eq!(tree.len(), 2);
+        assert_eq!(tree[0].name, "CHANGELOG.md");
+        assert_eq!(tree[0].path, "CHANGELOG.md");
+        assert!(!tree[0].is_dir);
+        assert_eq!(tree[1].name, "README.md");
+        assert_eq!(tree[1].path, "README.md");
+        assert!(!tree[1].is_dir);
+    }
+
+    #[test]
+    fn test_build_file_tree_nested() {
+        let paths = vec![
+            "README.md".to_string(),
+            "docs/api/reference.md".to_string(),
+            "docs/guide.md".to_string(),
+        ];
+        let tree = build_file_tree(&paths);
+
+        // dirs first, then files, alphabetical within each
+        assert_eq!(tree.len(), 2);
+
+        // First entry should be docs/ (dir sorts before files)
+        let docs = &tree[0];
+        assert_eq!(docs.name, "docs");
+        assert!(docs.is_dir);
+        assert_eq!(docs.children.len(), 2);
+
+        // docs/ children: api/ dir first, then guide.md file
+        let api = &docs.children[0];
+        assert_eq!(api.name, "api");
+        assert!(api.is_dir);
+        assert_eq!(api.children.len(), 1);
+        assert_eq!(api.children[0].name, "reference.md");
+        assert_eq!(api.children[0].path, "docs/api/reference.md");
+
+        let guide = &docs.children[1];
+        assert_eq!(guide.name, "guide.md");
+        assert_eq!(guide.path, "docs/guide.md");
+        assert!(!guide.is_dir);
+
+        // Second entry: README.md (file after dir)
+        assert_eq!(tree[1].name, "README.md");
+        assert_eq!(tree[1].path, "README.md");
+        assert!(!tree[1].is_dir);
+    }
+
+    #[test]
+    fn test_build_file_tree_empty() {
+        let paths: Vec<String> = vec![];
+        let tree = build_file_tree(&paths);
+        assert!(tree.is_empty());
     }
 }
