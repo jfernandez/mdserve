@@ -31,6 +31,18 @@ static TEMPLATE_ENV: OnceLock<Environment<'static>> = OnceLock::new();
 const MERMAID_JS: &str = include_str!("../static/js/mermaid.min.js");
 const MERMAID_ETAG: &str = concat!("\"", env!("CARGO_PKG_VERSION"), "\"");
 
+const EXCLUDED_DIRS: &[&str] = &[
+    "node_modules",
+    "target",
+    "__pycache__",
+    "dist",
+    "build",
+];
+
+fn is_excluded_dir(name: &str) -> bool {
+    name.starts_with('.') || EXCLUDED_DIRS.contains(&name)
+}
+
 type SharedMarkdownState = Arc<Mutex<MarkdownState>>;
 
 fn template_env() -> &'static Environment<'static> {
@@ -1742,5 +1754,23 @@ classDiagram
             !final_body.contains("Content of test1"),
             "Should not serve old content"
         );
+    }
+
+    #[test]
+    fn test_is_excluded_dir() {
+        assert!(is_excluded_dir("node_modules"));
+        assert!(is_excluded_dir("target"));
+        assert!(is_excluded_dir(".git"));
+        assert!(is_excluded_dir(".venv"));
+        assert!(is_excluded_dir("__pycache__"));
+        assert!(is_excluded_dir("dist"));
+        assert!(is_excluded_dir("build"));
+        assert!(is_excluded_dir(".github"));
+        assert!(is_excluded_dir(".hidden_anything"));
+
+        assert!(!is_excluded_dir("docs"));
+        assert!(!is_excluded_dir("src"));
+        assert!(!is_excluded_dir("my_module"));
+        assert!(!is_excluded_dir("README.md"));
     }
 }
