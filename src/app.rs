@@ -1512,7 +1512,7 @@ classDiagram
         let body = response.text();
 
         assert!(body.contains(r#"<nav class="sidebar">"#));
-        assert!(body.contains(r#"<ul class="file-list">"#));
+        assert!(body.contains(r#"class="file-list"#));
         assert!(body.contains("test1.md"));
         assert!(body.contains("test2.markdown"));
         assert!(body.contains("test3.md"));

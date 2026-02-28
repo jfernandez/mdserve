@@ -254,6 +254,78 @@
             left: 4px;
             cursor: e-resize;
         }
+
+        /* Recursive toggle */
+        .recursive-toggle {
+            padding: 8px 12px 12px 12px;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 8px;
+        }
+
+        .toggle-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--blockquote-color);
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .toggle-label input[type="checkbox"] {
+            margin: 0;
+            cursor: pointer;
+        }
+
+        body.sidebar-collapsed .recursive-toggle {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        /* Tree structure */
+        .tree-dir > .tree-children {
+            list-style: none;
+            padding-left: 16px;
+            margin: 0;
+        }
+
+        .tree-dir.collapsed > .tree-children {
+            display: none;
+        }
+
+        .dir-header {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 6px 12px;
+            cursor: pointer;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-color);
+            user-select: none;
+        }
+
+        .dir-header:hover {
+            background: var(--border-color-light);
+        }
+
+        .dir-chevron {
+            font-size: 10px;
+            transition: transform 0.2s ease;
+            display: inline-block;
+            width: 14px;
+            text-align: center;
+        }
+
+        .tree-dir.collapsed .dir-chevron {
+            transform: rotate(-90deg);
+        }
+
+        /* Hide nested items when recursive toggle is off */
+        .file-tree.flat-mode > .tree-dir {
+            display: none;
+        }
         {% else %}
         /* Single-file layout */
         body {
@@ -633,10 +705,74 @@
             };
         }
 
+        // Directory tree expand/collapse
+        function toggleDir(headerEl) {
+            var dirLi = headerEl.parentElement;
+            dirLi.classList.toggle('collapsed');
+            saveDirState();
+        }
+
+        function saveDirState() {
+            var collapsed = [];
+            document.querySelectorAll('.tree-dir.collapsed').forEach(function(el) {
+                var name = el.querySelector('.dir-name').textContent;
+                collapsed.push(name);
+            });
+            localStorage.setItem('collapsed-dirs', JSON.stringify(collapsed));
+        }
+
+        function restoreDirState() {
+            var saved = localStorage.getItem('collapsed-dirs');
+            if (!saved) return;
+            try {
+                var collapsed = JSON.parse(saved);
+                document.querySelectorAll('.tree-dir').forEach(function(el) {
+                    var name = el.querySelector('.dir-name').textContent;
+                    if (collapsed.indexOf(name) !== -1) {
+                        el.classList.add('collapsed');
+                    }
+                });
+            } catch (e) {}
+        }
+
+        function expandToActive() {
+            var activeLink = document.querySelector('.file-list a.active');
+            if (!activeLink) return;
+            var parent = activeLink.closest('.tree-dir');
+            while (parent) {
+                parent.classList.remove('collapsed');
+                parent = parent.parentElement.closest('.tree-dir');
+            }
+        }
+
+        function toggleRecursive(enabled) {
+            var fileTree = document.querySelector('.file-tree');
+            if (!fileTree) return;
+            if (enabled) {
+                fileTree.classList.remove('flat-mode');
+            } else {
+                fileTree.classList.add('flat-mode');
+            }
+            localStorage.setItem('recursive-mode', enabled ? 'true' : 'false');
+        }
+
+        function initRecursiveToggle() {
+            var saved = localStorage.getItem('recursive-mode');
+            var enabled = saved !== 'false';
+            var checkbox = document.getElementById('recursiveToggle');
+            if (checkbox) {
+                checkbox.checked = enabled;
+                toggleRecursive(enabled);
+            }
+        }
+
         // Initialize theme and live reload on page load
         document.addEventListener('DOMContentLoaded', function() {
             initTheme();
             initSidebar();
+            initRecursiveToggle();
+            restoreDirState();
+            expandToActive();
             initMermaid();
             setupLiveReload();
 
@@ -670,13 +806,31 @@
 <nav class="sidebar">
     <div class="sidebar-header"></div>
     <div class="sidebar-content">
-        <ul class="file-list">
-            {% for file in files %}
-            <li>
-                <a href="/{{ file.name }}"{% if file.name == current_file %} class="active"{% endif %}>
-                    {{ file.name }}
+        <div class="recursive-toggle">
+            <label class="toggle-label">
+                <input type="checkbox" id="recursiveToggle" checked onchange="toggleRecursive(this.checked)">
+                <span>Show all files</span>
+            </label>
+        </div>
+        <ul class="file-list file-tree" data-depth="0">
+            {% for entry in tree recursive %}
+            {% if entry.is_dir %}
+            <li class="tree-dir" data-depth="{{ loop.depth0 }}">
+                <div class="dir-header" onclick="toggleDir(this)">
+                    <span class="dir-chevron">&#9660;</span>
+                    <span class="dir-name">{{ entry.name }}</span>
+                </div>
+                <ul class="file-list tree-children">
+                    {{ loop(entry.children) }}
+                </ul>
+            </li>
+            {% else %}
+            <li class="tree-file" data-depth="{{ loop.depth0 }}">
+                <a href="/{{ entry.path }}"{% if entry.path == current_file %} class="active"{% endif %}>
+                    {{ entry.name }}
                 </a>
             </li>
+            {% endif %}
             {% endfor %}
         </ul>
     </div>
