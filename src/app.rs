@@ -120,12 +120,17 @@ impl MarkdownState {
 
         let mut tracked_files = HashMap::new();
         for file_path in file_paths {
+            let file_path = file_path.canonicalize().unwrap_or(file_path);
             let metadata = fs::metadata(&file_path)?;
             let last_modified = metadata.modified()?;
             let content = fs::read_to_string(&file_path)?;
             let html = Self::markdown_to_html(&content)?;
 
-            let filename = file_path.file_name().unwrap().to_string_lossy().to_string();
+            let filename = file_path
+                .strip_prefix(&base_dir)
+                .unwrap_or(&file_path)
+                .to_string_lossy()
+                .to_string();
 
             tracked_files.insert(
                 filename,
@@ -171,7 +176,12 @@ impl MarkdownState {
     }
 
     fn add_tracked_file(&mut self, file_path: PathBuf) -> Result<()> {
-        let filename = file_path.file_name().unwrap().to_string_lossy().to_string();
+        let file_path = file_path.canonicalize().unwrap_or(file_path);
+        let filename = file_path
+            .strip_prefix(&self.base_dir)
+            .unwrap_or(&file_path)
+            .to_string_lossy()
+            .to_string();
 
         if self.tracked_files.contains_key(&filename) {
             return Ok(());
@@ -211,12 +221,16 @@ async fn handle_markdown_file_change(path: &Path, state: &SharedMarkdownState) {
         return;
     }
 
-    let filename = path.file_name().and_then(|n| n.to_str()).map(String::from);
+    let mut state_guard = state.lock().await;
+
+    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let filename = canonical_path
+        .strip_prefix(&state_guard.base_dir)
+        .ok()
+        .map(|p| p.to_string_lossy().to_string());
     let Some(filename) = filename else {
         return;
     };
-
-    let mut state_guard = state.lock().await;
 
     // If file is already tracked, refresh its content
     if state_guard.tracked_files.contains_key(&filename) {
@@ -1828,5 +1842,33 @@ classDiagram
         assert!(!is_excluded_dir("src"));
         assert!(!is_excluded_dir("my_module"));
         assert!(!is_excluded_dir("README.md"));
+    }
+
+    #[tokio::test]
+    async fn test_directory_mode_serves_subdirectory_files() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+
+        fs::write(temp_dir.path().join("root.md"), "# Root\n\nRoot content")
+            .expect("Failed to write");
+
+        let sub_dir = temp_dir.path().join("docs");
+        fs::create_dir(&sub_dir).expect("Failed to create subdir");
+        fs::write(sub_dir.join("guide.md"), "# Guide\n\nGuide content")
+            .expect("Failed to write");
+
+        let base_dir = temp_dir.path().to_path_buf();
+        let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan");
+        let router = new_router(base_dir, tracked_files, true).expect("Failed to create router");
+        let server = TestServer::new(router).expect("Failed to create test server");
+
+        // Root file served at /root.md
+        let response = server.get("/root.md").await;
+        assert_eq!(response.status_code(), 200);
+        assert!(response.text().contains("Root content"));
+
+        // Subdirectory file served at /docs/guide.md
+        let response = server.get("/docs/guide.md").await;
+        assert_eq!(response.status_code(), 200);
+        assert!(response.text().contains("Guide content"));
     }
 }
