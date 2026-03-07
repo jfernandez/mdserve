@@ -1,3 +1,15 @@
+## [1.1.0] - 2026-03-07
+### Features
+- Auto-increment port when requested port is in use (#64)
+### Bug Fixes
+- Use kebab-case for marketplace name
+- Use native background tasks in mdserve skill
+- Allow serving images from subdirectories (#66)
+### Documentation
+- Add Claude Code plugin installation instructions to README (#62)
+### CI
+- Enforce conventional commits on PRs (#67)
+
 ## [1.0.0] - 2026-02-07
 ### Features
 - Add --open flag to launch browser (#59)
