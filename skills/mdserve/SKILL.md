@@ -48,20 +48,9 @@ comfortably within a terminal window.
 
 ## Port conflicts
 
-Before starting mdserve, check if the default port is in use:
-
-```bash
-ss -tlnp | grep :3000
-```
-
-If port 3000 is occupied, pick another port:
-
-```
-command: mdserve --open plan.md --port 3001
-run_in_background: true
-```
-
-Always tell the user the actual URL including the port you used.
+mdserve automatically finds an available port if the default (3000) is
+in use. Check the startup output for the actual URL and always tell the
+user the URL that mdserve reports.
 
 ## Directory mode
 

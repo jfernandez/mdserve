@@ -1,6 +1,6 @@
 {
   "name": "mdserve",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Markdown preview server for AI coding agents. Renders markdown live in the browser with instant reload, Mermaid diagrams, and GFM support.",
   "author": {
     "name": "Jose Fernandez",
