@@ -1,0 +1,8 @@
+repos:
+  - repo: https://codeberg.org/avery42/pre-commit-rust.git
+    rev: v1.0.0
+    hooks:
+      - id: cargo-fmt
+      - id: cargo-clippy
+        args: ['--all-targets', '--all-features', '--', '-D', 'warnings']
+      - id: cargo-test

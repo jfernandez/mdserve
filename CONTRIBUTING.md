@@ -64,6 +64,45 @@ ci: add commitlint workflow
 - Run `cargo clippy` and fix any warnings
 - Follow existing code conventions
 
+### Pre-commit Hooks (Recommended)
+
+We use [prek](https://github.com/j178/prek) to run automated checks before each commit. This ensures code quality and catches issues early.
+
+**Installation:**
+
+```bash
+# Using curl (macOS/Linux)
+curl -fsSL https://prek.j178.dev/install.sh | sh
+
+# Using pipx
+pipx install prek
+
+# Using cargo
+cargo install prek
+```
+
+**Setup:**
+
+```bash
+# Install the git hooks
+prek install
+```
+
+Once installed, prek will automatically run on each commit to check:
+- Code formatting (`cargo fmt`)
+- Linter warnings (`cargo clippy`)
+- Tests (`cargo test`)
+
+**Manual run:**
+
+```bash
+# Run all hooks
+prek run --all-files
+
+# Run specific hook
+prek run cargo-fmt
+```
+
 ## Questions?
 
 Feel free to open an issue for any questions about contributing.
