@@ -634,15 +634,7 @@ async fn serve_static_file_inner(
 }
 
 fn is_image_file(file_path: &str) -> bool {
-    let extension = std::path::Path::new(file_path)
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or("");
-
-    matches!(
-        extension.to_lowercase().as_str(),
-        "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "bmp" | "ico"
-    )
+    guess_image_content_type(file_path).starts_with("image/")
 }
 
 fn guess_image_content_type(file_path: &str) -> String {
