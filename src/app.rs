@@ -43,18 +43,10 @@ fn template_env() -> &'static Environment<'static> {
     })
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type")]
-enum ClientMessage {
-    Ping,
-    RequestRefresh,
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "type")]
 enum ServerMessage {
     Reload,
-    Pong,
 }
 
 pub(crate) fn scan_markdown_files(dir: &Path) -> Result<Vec<PathBuf>> {
@@ -673,13 +665,7 @@ async fn handle_websocket(socket: WebSocket, state: SharedMarkdownState) {
     let recv_task = tokio::spawn(async move {
         while let Some(msg) = receiver.next().await {
             match msg {
-                Ok(Message::Text(text)) => {
-                    if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
-                        match client_msg {
-                            ClientMessage::Ping | ClientMessage::RequestRefresh => {}
-                        }
-                    }
-                }
+                Ok(Message::Text(_)) => {}
                 Ok(Message::Close(_)) => break,
                 _ => {}
             }
@@ -1008,18 +994,7 @@ mod tests {
         )
         .await;
 
-        match update_result {
-            Ok(update_message) => {
-                if let ServerMessage::Reload = update_message {
-                    // Success
-                } else {
-                    panic!("Expected Reload message after file modification");
-                }
-            }
-            Err(_) => {
-                panic!("Timeout waiting for WebSocket update after file modification");
-            }
-        }
+        update_result.expect("Timeout waiting for WebSocket update after file modification");
     }
 
     #[tokio::test]
@@ -1450,18 +1425,7 @@ classDiagram
         )
         .await;
 
-        match update_result {
-            Ok(update_message) => {
-                if let ServerMessage::Reload = update_message {
-                    // Success
-                } else {
-                    panic!("Expected Reload message after file modification");
-                }
-            }
-            Err(_) => {
-                panic!("Timeout waiting for WebSocket update after file modification");
-            }
-        }
+        update_result.expect("Timeout waiting for WebSocket update after file modification");
     }
 
     #[tokio::test]
@@ -1481,18 +1445,7 @@ classDiagram
         )
         .await;
 
-        match update_result {
-            Ok(update_message) => {
-                if let ServerMessage::Reload = update_message {
-                    // Success
-                } else {
-                    panic!("Expected Reload message after new file creation");
-                }
-            }
-            Err(_) => {
-                panic!("Timeout waiting for WebSocket update after new file creation");
-            }
-        }
+        update_result.expect("Timeout waiting for WebSocket update after new file creation");
 
         let response = server.get("/test1.md").await;
         assert_eq!(response.status_code(), 200);
@@ -1692,18 +1645,7 @@ classDiagram
         )
         .await;
 
-        match update_result {
-            Ok(update_message) => {
-                if let ServerMessage::Reload = update_message {
-                    // Success
-                } else {
-                    panic!("Expected Reload message after temp file rename");
-                }
-            }
-            Err(_) => {
-                panic!("Timeout waiting for WebSocket update after temp file rename");
-            }
-        }
+        update_result.expect("Timeout waiting for WebSocket update after temp file rename");
 
         let final_response = server.get("/").await;
         assert_eq!(final_response.status_code(), 200);
@@ -1752,20 +1694,9 @@ classDiagram
         )
         .await;
 
-        match update_result {
-            Ok(update_message) => {
-                if let ServerMessage::Reload = update_message {
-                    // Success
-                } else {
-                    panic!("Expected Reload message after temp file rename in directory mode");
-                }
-            }
-            Err(_) => {
-                panic!(
-                    "Timeout waiting for WebSocket update after temp file rename in directory mode"
-                );
-            }
-        }
+        update_result.expect(
+            "Timeout waiting for WebSocket update after temp file rename in directory mode",
+        );
 
         let final_response = server.get("/test1.md").await;
         assert_eq!(final_response.status_code(), 200);
