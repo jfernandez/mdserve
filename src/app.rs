@@ -42,18 +42,10 @@ fn template_env() -> &'static Environment<'static> {
     })
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type")]
-enum ClientMessage {
-    Ping,
-    RequestRefresh,
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "type")]
 enum ServerMessage {
     Reload,
-    Pong,
 }
 
 use std::collections::HashMap;
@@ -682,13 +674,7 @@ async fn handle_websocket(socket: WebSocket, state: SharedMarkdownState) {
     let recv_task = tokio::spawn(async move {
         while let Some(msg) = receiver.next().await {
             match msg {
-                Ok(Message::Text(text)) => {
-                    if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
-                        match client_msg {
-                            ClientMessage::Ping | ClientMessage::RequestRefresh => {}
-                        }
-                    }
-                }
+                Ok(Message::Text(_)) => {}
                 Ok(Message::Close(_)) => break,
                 _ => {}
             }
