@@ -500,6 +500,12 @@ async fn render_markdown(state: &MarkdownState, current_file: &str) -> (StatusCo
         return (StatusCode::NOT_FOUND, Html("File not found".to_string()));
     };
 
+    // Derive page title from filename (stem without extension)
+    let page_title = std::path::Path::new(current_file)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(current_file);
+
     let rendered = if state.show_navigation() {
         let filenames = state.get_sorted_filenames();
         let files: Vec<Value> = filenames
@@ -519,6 +525,7 @@ async fn render_markdown(state: &MarkdownState, current_file: &str) -> (StatusCo
             show_navigation => true,
             files => files,
             current_file => current_file,
+            page_title => page_title,
         }) {
             Ok(r) => r,
             Err(e) => {
@@ -533,6 +540,7 @@ async fn render_markdown(state: &MarkdownState, current_file: &str) -> (StatusCo
             content => content,
             mermaid_enabled => has_mermaid,
             show_navigation => false,
+            page_title => page_title,
         }) {
             Ok(r) => r,
             Err(e) => {
