@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 mod app;
 
-use app::{scan_markdown_files, serve_markdown};
+use app::{scan_markdown_files, serve_markdown, RtlMode};
 
 #[derive(Parser)]
 #[command(name = "mdserve")]
@@ -25,6 +25,14 @@ struct Args {
     /// Open the preview in the default browser
     #[arg(short, long)]
     open: bool,
+
+    /// Force RTL rendering for all documents
+    #[arg(long)]
+    rtl: bool,
+
+    /// Disable RTL auto-detection; force LTR for all documents
+    #[arg(long, conflicts_with = "rtl")]
+    no_rtl: bool,
 }
 
 #[tokio::main]
@@ -51,6 +59,15 @@ async fn main() -> Result<()> {
         anyhow::bail!("Path must be a file or directory");
     };
 
+    // Determine RTL mode from flags
+    let rtl_mode = if args.rtl {
+        RtlMode::Force
+    } else if args.no_rtl {
+        RtlMode::Disabled
+    } else {
+        RtlMode::Auto
+    };
+
     // Single unified serve function
     serve_markdown(
         base_dir,
@@ -59,6 +76,7 @@ async fn main() -> Result<()> {
         args.hostname,
         args.port,
         args.open,
+        rtl_mode,
     )
     .await?;
 

@@ -118,6 +118,14 @@
                         color var(--transition-speed) var(--transition-timing);
         }
 
+        {% if is_rtl %}
+        #content {
+            font-family: 'Arial Hebrew', 'David', 'FrankRuehl', 'Miriam', 'Narkisim',
+                         'Arabic Typesetting', 'Arial Arabic', 'Geeza Pro', 'Scheherazade',
+                         system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+        {% endif %}
+
         {% if show_navigation %}
         /* ============================================
            Multi-file Navigation Layout
@@ -418,12 +426,26 @@
             background-color: transparent;
             padding: 0;
         }
+        {% if is_rtl %}
+        #content pre, #content code {
+            direction: ltr;
+        }
+        {% endif %}
         blockquote {
             border-left: 4px solid var(--border-color-light);
             padding-left: 16px;
             margin-left: 0;
             color: var(--blockquote-color);
         }
+        {% if is_rtl %}
+        #content blockquote {
+            border-left: none;
+            border-right: 4px solid var(--border-color-light);
+            padding-left: 0;
+            padding-right: 16px;
+            margin-right: 0;
+        }
+        {% endif %}
         table {
             border-collapse: collapse;
             width: 100%;
@@ -432,7 +454,7 @@
         th, td {
             border: 1px solid var(--border-color-light);
             padding: 8px 12px;
-            text-align: left;
+            text-align: start;
         }
         th {
             background-color: var(--table-header-bg);
@@ -684,7 +706,7 @@
 {% endif %}
 
 <button class="theme-toggle" onclick="openThemeModal()">🎨</button>
-<div id="content">
+<div id="content"{% if is_rtl %} dir="rtl"{% endif %}>
 {{ content }}
 </div>
 
