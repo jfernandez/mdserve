@@ -128,17 +128,21 @@ impl MarkdownState {
     }
 
     fn refresh_file(&mut self, filename: &str) -> Result<()> {
-        if let Some(tracked) = self.tracked_files.get_mut(filename) {
-            let metadata = fs::metadata(&tracked.path)?;
-            let current_modified = metadata.modified()?;
-
+        if let Some(tracked) = self.tracked_files.get(filename) {
+            let current_modified = fs::metadata(&tracked.path)?.modified()?;
             if current_modified > tracked.last_modified {
-                let content = fs::read_to_string(&tracked.path)?;
-                tracked.html = Self::markdown_to_html(&content)?;
-                tracked.last_modified = current_modified;
+                return self.force_refresh_file(filename);
             }
         }
+        Ok(())
+    }
 
+    fn force_refresh_file(&mut self, filename: &str) -> Result<()> {
+        if let Some(tracked) = self.tracked_files.get_mut(filename) {
+            let content = fs::read_to_string(&tracked.path)?;
+            tracked.html = Self::markdown_to_html(&content)?;
+            tracked.last_modified = fs::metadata(&tracked.path)?.modified()?;
+        }
         Ok(())
     }
 
@@ -192,7 +196,7 @@ async fn handle_markdown_file_change(path: &Path, state: &SharedMarkdownState) {
 
     // If file is already tracked, refresh its content
     if state_guard.tracked_files.contains_key(&filename) {
-        if state_guard.refresh_file(&filename).is_ok() {
+        if state_guard.force_refresh_file(&filename).is_ok() {
             let _ = state_guard.change_tx.send(ServerMessage::Reload);
         }
     } else if state_guard.is_directory_mode {
