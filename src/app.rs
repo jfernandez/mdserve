@@ -130,16 +130,6 @@ impl MarkdownState {
     }
 
     fn refresh_file(&mut self, filename: &str) -> Result<()> {
-        if let Some(tracked) = self.tracked_files.get(filename) {
-            let current_modified = fs::metadata(&tracked.path)?.modified()?;
-            if current_modified > tracked.last_modified {
-                return self.force_refresh_file(filename);
-            }
-        }
-        Ok(())
-    }
-
-    fn force_refresh_file(&mut self, filename: &str) -> Result<()> {
         if let Some(tracked) = self.tracked_files.get_mut(filename) {
             let content = fs::read_to_string(&tracked.path)?;
             tracked.html = Self::markdown_to_html(&content)?;
@@ -199,7 +189,7 @@ async fn handle_markdown_file_change(path: &Path, state: &SharedMarkdownState) {
 
     // If file is already tracked, refresh its content
     if state_guard.tracked_files.contains_key(&filename) {
-        if state_guard.force_refresh_file(&filename).is_ok() {
+        if state_guard.refresh_file(&filename).is_ok() {
             let _ = state_guard.change_tx.send(ServerMessage::Reload);
         }
     } else if state_guard.is_directory_mode {
@@ -451,7 +441,7 @@ fn open_browser(url: &str) -> Result<()> {
 }
 
 async fn serve_html_root(State(state): State<SharedMarkdownState>) -> impl IntoResponse {
-    let mut state = state.lock().await;
+    let state = state.lock().await;
 
     let filename = match state.get_sorted_filenames().into_iter().next() {
         Some(name) => name,
@@ -463,8 +453,6 @@ async fn serve_html_root(State(state): State<SharedMarkdownState>) -> impl IntoR
         }
     };
 
-    let _ = state.refresh_file(&filename);
-
     render_markdown(&state, &filename).await
 }
 
@@ -473,13 +461,11 @@ async fn serve_file(
     State(state): State<SharedMarkdownState>,
 ) -> axum::response::Response {
     if filename.ends_with(".md") || filename.ends_with(".markdown") {
-        let mut state = state.lock().await;
+        let state = state.lock().await;
 
         if !state.tracked_files.contains_key(&filename) {
             return (StatusCode::NOT_FOUND, Html("File not found".to_string())).into_response();
         }
-
-        let _ = state.refresh_file(&filename);
 
         let (status, html) = render_markdown(&state, &filename).await;
         (status, html).into_response()
