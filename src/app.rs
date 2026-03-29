@@ -871,7 +871,11 @@ mod tests {
         "---\ntitle: Test Post\nauthor: Name\n---\n\n# Test Post\n";
     const TOML_FRONTMATTER_CONTENT: &str = "+++\ntitle = \"Test Post\"\n+++\n\n# Test Post\n";
 
-    fn create_test_server_impl(content: &str, use_http: bool) -> (TestServer, NamedTempFile) {
+    fn create_test_server_impl(
+        content: &str,
+        use_http: bool,
+        rtl: bool,
+    ) -> (TestServer, NamedTempFile) {
         let temp_file = Builder::new()
             .suffix(".md")
             .tempfile()
@@ -890,7 +894,7 @@ mod tests {
         let tracked_files = vec![canonical_path];
         let is_directory_mode = false;
 
-        let router = new_router(base_dir, tracked_files, is_directory_mode, false)
+        let router = new_router(base_dir, tracked_files, is_directory_mode, rtl)
             .expect("Failed to create router");
 
         let server = if use_http {
@@ -906,11 +910,11 @@ mod tests {
     }
 
     async fn create_test_server(content: &str) -> (TestServer, NamedTempFile) {
-        create_test_server_impl(content, false)
+        create_test_server_impl(content, false, false)
     }
 
     async fn create_test_server_with_http(content: &str) -> (TestServer, NamedTempFile) {
-        create_test_server_impl(content, true)
+        create_test_server_impl(content, true, false)
     }
 
     fn create_directory_server_impl(use_http: bool) -> (TestServer, TempDir) {
@@ -1709,36 +1713,10 @@ classDiagram
         );
     }
 
-    fn create_test_server_with_rtl(content: &str, rtl: bool) -> (TestServer, NamedTempFile) {
-        let temp_file = Builder::new()
-            .suffix(".md")
-            .tempfile()
-            .expect("Failed to create temp file");
-        fs::write(&temp_file, content).expect("Failed to write temp file");
-
-        let canonical_path = temp_file
-            .path()
-            .canonicalize()
-            .unwrap_or_else(|_| temp_file.path().to_path_buf());
-
-        let base_dir = canonical_path
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new("."))
-            .to_path_buf();
-        let tracked_files = vec![canonical_path];
-
-        let router = new_router(base_dir, tracked_files, false, rtl)
-            .expect("Failed to create router");
-
-        let server = TestServer::new(router).expect("Failed to create test server");
-
-        (server, temp_file)
-    }
-
     #[tokio::test]
     async fn test_rtl_flag_sets_dir_attribute() {
         let (server, _temp_file) =
-            create_test_server_with_rtl("# Hello\n\nSome content.", true);
+            create_test_server_impl("# Hello\n\nSome content.", false, true);
 
         let response = server.get("/").await;
         let body = response.text();
@@ -1756,7 +1734,7 @@ classDiagram
     #[tokio::test]
     async fn test_no_rtl_flag_no_dir_attribute() {
         let (server, _temp_file) =
-            create_test_server_with_rtl("# Hello\n\nSome content.", false);
+            create_test_server_impl("# Hello\n\nSome content.", false, false);
 
         let response = server.get("/").await;
         let body = response.text();
@@ -1771,7 +1749,7 @@ classDiagram
     async fn test_code_blocks_ltr_in_rtl_mode() {
         let content_with_code = "# Title\n\n```\ncode block\n```";
         let (server, _temp_file) =
-            create_test_server_with_rtl(content_with_code, true);
+            create_test_server_impl(content_with_code, false, true);
 
         let response = server.get("/").await;
         let body = response.text();
@@ -1786,7 +1764,7 @@ classDiagram
     async fn test_no_direction_override_without_rtl_flag() {
         let content_with_code = "# Hello\n\n```\ncode block\n```";
         let (server, _temp_file) =
-            create_test_server_with_rtl(content_with_code, false);
+            create_test_server_impl(content_with_code, false, false);
 
         let response = server.get("/").await;
         let body = response.text();
@@ -1801,7 +1779,7 @@ classDiagram
     async fn test_rtl_flag_renders_fixture() {
         let content = fs::read_to_string("tests/fixtures/rtl.md")
             .expect("Failed to read RTL fixture");
-        let (server, _temp_file) = create_test_server_with_rtl(&content, true);
+        let (server, _temp_file) = create_test_server_impl(&content, false, true);
 
         let response = server.get("/").await;
         assert_eq!(response.status_code(), 200);
