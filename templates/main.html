@@ -432,20 +432,11 @@
         }
         {% endif %}
         blockquote {
-            border-left: 4px solid var(--border-color-light);
-            padding-left: 16px;
-            margin-left: 0;
+            border-inline-start: 4px solid var(--border-color-light);
+            padding-inline-start: 16px;
+            margin-inline-start: 0;
             color: var(--blockquote-color);
         }
-        {% if is_rtl %}
-        #content blockquote {
-            border-left: none;
-            border-right: 4px solid var(--border-color-light);
-            padding-left: 0;
-            padding-right: 16px;
-            margin-right: 0;
-        }
-        {% endif %}
         table {
             border-collapse: collapse;
             width: 100%;

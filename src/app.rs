@@ -73,55 +73,10 @@ fn is_markdown_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn is_rtl_char(c: char) -> bool {
-    matches!(c as u32,
-        0x0590..=0x05FF |   // Hebrew
-        0x0600..=0x06FF |   // Arabic
-        0x0700..=0x074F |   // Syriac
-        0x0750..=0x077F |   // Arabic Supplement
-        0x0780..=0x07BF |   // Thaana
-        0x07C0..=0x07FF |   // NKo
-        0x08A0..=0x08FF     // Arabic Extended-A
-    )
-}
-
-pub(crate) fn detect_rtl(content: &str) -> bool {
-    let (alpha_count, rtl_count) = content.chars()
-        .filter(|c| c.is_alphabetic())
-        .fold((0usize, 0usize), |(total, rtl), c| {
-            (total + 1, rtl + usize::from(is_rtl_char(c)))
-        });
-
-    alpha_count > 0 && rtl_count * 2 >= alpha_count
-}
-
-#[derive(Clone, Copy)]
-pub(crate) enum RtlMode {
-    Auto,
-    Force,
-    Disabled,
-}
-
-impl RtlMode {
-    fn resolve(self, detected: bool) -> bool {
-        match self {
-            RtlMode::Force => true,
-            RtlMode::Disabled => false,
-            RtlMode::Auto => detected,
-        }
-    }
-}
-
-struct RenderedFile {
-    html: String,
-    is_rtl: bool,
-}
-
 struct TrackedFile {
     path: PathBuf,
     last_modified: SystemTime,
     html: String,
-    is_rtl: bool,
 }
 
 struct MarkdownState {
@@ -129,11 +84,11 @@ struct MarkdownState {
     tracked_files: HashMap<String, TrackedFile>,
     is_directory_mode: bool,
     change_tx: broadcast::Sender<ServerMessage>,
-    rtl_mode: RtlMode,
+    rtl: bool,
 }
 
 impl MarkdownState {
-    fn new(base_dir: PathBuf, file_paths: Vec<PathBuf>, is_directory_mode: bool, rtl_mode: RtlMode) -> Result<Self> {
+    fn new(base_dir: PathBuf, file_paths: Vec<PathBuf>, is_directory_mode: bool, rtl: bool) -> Result<Self> {
         let (change_tx, _) = broadcast::channel::<ServerMessage>(16);
 
         let mut tracked_files = HashMap::new();
@@ -141,8 +96,7 @@ impl MarkdownState {
             let metadata = fs::metadata(&file_path)?;
             let last_modified = metadata.modified()?;
             let content = fs::read_to_string(&file_path)?;
-            let rendered = Self::markdown_to_html(&content)?;
-            let is_rtl = rtl_mode.resolve(rendered.is_rtl);
+            let html = Self::markdown_to_html(&content)?;
 
             let filename = file_path.file_name().unwrap().to_string_lossy().to_string();
 
@@ -151,8 +105,7 @@ impl MarkdownState {
                 TrackedFile {
                     path: file_path,
                     last_modified,
-                    html: rendered.html,
-                    is_rtl,
+                    html,
                 },
             );
         }
@@ -162,7 +115,7 @@ impl MarkdownState {
             tracked_files,
             is_directory_mode,
             change_tx,
-            rtl_mode,
+            rtl,
         })
     }
 
@@ -183,9 +136,7 @@ impl MarkdownState {
 
             if current_modified > tracked.last_modified {
                 let content = fs::read_to_string(&tracked.path)?;
-                let rendered = Self::markdown_to_html(&content)?;
-                tracked.html = rendered.html;
-                tracked.is_rtl = self.rtl_mode.resolve(rendered.is_rtl);
+                tracked.html = Self::markdown_to_html(&content)?;
                 tracked.last_modified = current_modified;
             }
         }
@@ -202,24 +153,21 @@ impl MarkdownState {
 
         let metadata = fs::metadata(&file_path)?;
         let content = fs::read_to_string(&file_path)?;
-        let rendered = Self::markdown_to_html(&content)?;
-        let is_rtl = self.rtl_mode.resolve(rendered.is_rtl);
+        let html = Self::markdown_to_html(&content)?;
 
         self.tracked_files.insert(
             filename,
             TrackedFile {
                 path: file_path,
                 last_modified: metadata.modified()?,
-                html: rendered.html,
-                is_rtl,
+                html,
             },
         );
 
         Ok(())
     }
 
-    fn markdown_to_html(content: &str) -> Result<RenderedFile> {
-        let is_rtl = detect_rtl(content);
+    fn markdown_to_html(content: &str) -> Result<String> {
         let mut options = markdown::Options::gfm();
         options.compile.allow_dangerous_html = true;
         options.parse.constructs.frontmatter = true;
@@ -227,7 +175,7 @@ impl MarkdownState {
         let html = markdown::to_html_with_options(content, &options)
             .unwrap_or_else(|_| "Error parsing markdown".to_string());
 
-        Ok(RenderedFile { html, is_rtl })
+        Ok(html)
     }
 }
 
@@ -327,7 +275,7 @@ fn new_router(
     base_dir: PathBuf,
     tracked_files: Vec<PathBuf>,
     is_directory_mode: bool,
-    rtl_mode: RtlMode,
+    rtl: bool,
 ) -> Result<Router> {
     let base_dir = base_dir.canonicalize()?;
 
@@ -335,7 +283,7 @@ fn new_router(
         base_dir.clone(),
         tracked_files,
         is_directory_mode,
-        rtl_mode,
+        rtl,
     )?));
 
     let watcher_state = state.clone();
@@ -400,12 +348,12 @@ pub(crate) async fn serve_markdown(
     hostname: impl AsRef<str>,
     port: u16,
     open: bool,
-    rtl_mode: RtlMode,
+    rtl: bool,
 ) -> Result<()> {
     let hostname = hostname.as_ref();
 
     let first_file = tracked_files.first().cloned();
-    let router = new_router(base_dir.clone(), tracked_files, is_directory_mode, rtl_mode)?;
+    let router = new_router(base_dir.clone(), tracked_files, is_directory_mode, rtl)?;
 
     let (listener, actual_port) = bind_with_retry(hostname, port).await?;
 
@@ -550,10 +498,10 @@ async fn render_markdown(state: &MarkdownState, current_file: &str) -> (StatusCo
         }
     };
 
-    let (content, has_mermaid, is_rtl) = if let Some(tracked) = state.tracked_files.get(current_file) {
+    let (content, has_mermaid) = if let Some(tracked) = state.tracked_files.get(current_file) {
         let html = &tracked.html;
         let mermaid = html.contains(r#"class="language-mermaid""#);
-        (Value::from_safe_string(html.clone()), mermaid, tracked.is_rtl)
+        (Value::from_safe_string(html.clone()), mermaid)
     } else {
         return (StatusCode::NOT_FOUND, Html("File not found".to_string()));
     };
@@ -577,7 +525,7 @@ async fn render_markdown(state: &MarkdownState, current_file: &str) -> (StatusCo
             show_navigation => true,
             files => files,
             current_file => current_file,
-            is_rtl => is_rtl,
+            is_rtl => state.rtl,
         }) {
             Ok(r) => r,
             Err(e) => {
@@ -592,7 +540,7 @@ async fn render_markdown(state: &MarkdownState, current_file: &str) -> (StatusCo
             content => content,
             mermaid_enabled => has_mermaid,
             show_navigation => false,
-            is_rtl => is_rtl,
+            is_rtl => state.rtl,
         }) {
             Ok(r) => r,
             Err(e) => {
@@ -952,7 +900,7 @@ mod tests {
         let tracked_files = vec![canonical_path];
         let is_directory_mode = false;
 
-        let router = new_router(base_dir, tracked_files, is_directory_mode, RtlMode::Auto)
+        let router = new_router(base_dir, tracked_files, is_directory_mode, false)
             .expect("Failed to create router");
 
         let server = if use_http {
@@ -989,7 +937,7 @@ mod tests {
         let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan markdown files");
         let is_directory_mode = true;
 
-        let router = new_router(base_dir, tracked_files, is_directory_mode, RtlMode::Auto)
+        let router = new_router(base_dir, tracked_files, is_directory_mode, false)
             .expect("Failed to create router");
 
         let server = if use_http {
@@ -1124,7 +1072,7 @@ fn main() {
         let base_dir = temp_dir.path().to_path_buf();
         let tracked_files = vec![md_path];
         let is_directory_mode = false;
-        let router = new_router(base_dir, tracked_files, is_directory_mode, RtlMode::Auto)
+        let router = new_router(base_dir, tracked_files, is_directory_mode, false)
             .expect("Failed to create router");
         let server = TestServer::new(router).expect("Failed to create test server");
 
@@ -1153,7 +1101,7 @@ fn main() {
         let base_dir = temp_dir.path().to_path_buf();
         let tracked_files = vec![md_path];
         let is_directory_mode = false;
-        let router = new_router(base_dir, tracked_files, is_directory_mode, RtlMode::Auto)
+        let router = new_router(base_dir, tracked_files, is_directory_mode, false)
             .expect("Failed to create router");
         let server = TestServer::new(router).expect("Failed to create test server");
 
@@ -1771,219 +1719,130 @@ classDiagram
         );
     }
 
+    fn create_test_server_with_rtl(content: &str, rtl: bool) -> (TestServer, NamedTempFile) {
+        let temp_file = Builder::new()
+            .suffix(".md")
+            .tempfile()
+            .expect("Failed to create temp file");
+        fs::write(&temp_file, content).expect("Failed to write temp file");
+
+        let canonical_path = temp_file
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| temp_file.path().to_path_buf());
+
+        let base_dir = canonical_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .to_path_buf();
+        let tracked_files = vec![canonical_path];
+
+        let router = new_router(base_dir, tracked_files, false, rtl)
+            .expect("Failed to create router");
+
+        let server = TestServer::new(router).expect("Failed to create test server");
+
+        (server, temp_file)
+    }
+
     #[tokio::test]
-    async fn test_hebrew_content_auto_detected_as_rtl() {
-        let hebrew_content = "# שלום עולם\n\nזה תוכן בעברית.";
-        let (server, _temp_file) = create_test_server(hebrew_content).await;
+    async fn test_rtl_flag_sets_dir_attribute() {
+        let (server, _temp_file) =
+            create_test_server_with_rtl("# Hello\n\nSome content.", true);
 
         let response = server.get("/").await;
         let body = response.text();
 
         assert!(
             body.contains(r#"id="content" dir="rtl""#),
-            "Hebrew content should have dir=\"rtl\" attribute"
+            "RTL flag should set dir=\"rtl\" on content div"
         );
-    }
-
-    #[tokio::test]
-    async fn test_english_content_no_rtl() {
-        let english_content = "# Hello World\n\nThis is English content.";
-        let (server, _temp_file) = create_test_server(english_content).await;
-
-        let response = server.get("/").await;
-        let body = response.text();
-
-        assert!(
-            body.contains(r#"id="content""#),
-            "Content div should exist"
-        );
-        assert!(
-            !body.contains(r#"id="content" dir="rtl""#),
-            "English content should not have dir=\"rtl\" attribute"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_hebrew_font_applied_for_rtl() {
-        let hebrew_content = "# שלום עולם\n\nזה תוכן בעברית.";
-        let (server, _temp_file) = create_test_server(hebrew_content).await;
-
-        let response = server.get("/").await;
-        let body = response.text();
-
         assert!(
             body.contains("Arial Hebrew"),
-            "Hebrew font stack should be applied for RTL content"
+            "RTL flag should include RTL font stack"
         );
     }
 
     #[tokio::test]
-    async fn test_blockquote_rtl_styling() {
-        let hebrew_content = "# שלום עולם\n\n> זו ציטוט בעברית";
-        let (server, _temp_file) = create_test_server(hebrew_content).await;
+    async fn test_no_rtl_flag_no_dir_attribute() {
+        let (server, _temp_file) =
+            create_test_server_with_rtl("# Hello\n\nSome content.", false);
 
         let response = server.get("/").await;
         let body = response.text();
 
         assert!(
-            body.contains("border-right: 4px solid"),
-            "RTL blockquote should have border-right styling"
-        );
-        assert!(
-            body.contains("padding-right: 16px"),
-            "RTL blockquote should have padding-right"
+            !body.contains(r#"dir="rtl""#),
+            "Without RTL flag, content should not have dir=\"rtl\""
         );
     }
 
     #[tokio::test]
-    async fn test_code_blocks_always_ltr() {
-        let hebrew_with_code = "# שלום עולם\n\nזה תוכן בעברית עם בלוק קוד.\n\n```\ncode block\n```";
-        let (server, _temp_file) = create_test_server(hebrew_with_code).await;
+    async fn test_code_blocks_ltr_in_rtl_mode() {
+        let content_with_code = "# Title\n\n```\ncode block\n```";
+        let (server, _temp_file) =
+            create_test_server_with_rtl(content_with_code, true);
 
         let response = server.get("/").await;
         let body = response.text();
 
         assert!(
             body.contains("direction: ltr"),
-            "RTL document should have direction: ltr for code blocks"
+            "Code blocks should be forced LTR in RTL mode"
         );
     }
 
     #[tokio::test]
-    async fn test_english_has_no_direction_ltr() {
-        let english_content = "# Hello\n\n```\ncode block\n```";
-        let (server, _temp_file) = create_test_server(english_content).await;
+    async fn test_no_direction_override_without_rtl_flag() {
+        let content_with_code = "# Hello\n\n```\ncode block\n```";
+        let (server, _temp_file) =
+            create_test_server_with_rtl(content_with_code, false);
 
         let response = server.get("/").await;
         let body = response.text();
 
         assert!(
             !body.contains("direction: ltr"),
-            "LTR document should not have direction: ltr overrides"
+            "Without RTL flag, no direction override should be present"
         );
     }
 
     #[tokio::test]
-    async fn test_arabic_content_auto_detected_as_rtl() {
-        let arabic_content = "# مرحبا بالعالم\n\nهذا محتوى باللغة العربية.";
-        let (server, _temp_file) = create_test_server(arabic_content).await;
+    async fn test_rtl_flag_renders_fixture() {
+        let content = fs::read_to_string("tests/fixtures/rtl.md")
+            .expect("Failed to read RTL fixture");
+        let (server, _temp_file) = create_test_server_with_rtl(&content, true);
 
         let response = server.get("/").await;
+        assert_eq!(response.status_code(), 200);
         let body = response.text();
 
+        // Content div gets dir="rtl"
         assert!(
             body.contains(r#"id="content" dir="rtl""#),
-            "Arabic content should have dir=\"rtl\" attribute"
+            "Content div should have dir=\"rtl\""
         );
-    }
 
-    #[tokio::test]
-    async fn test_farsi_content_auto_detected_as_rtl() {
-        let farsi_content = "# سلام جهان\n\nاین یک محتوی فارسی است.";
-        let (server, _temp_file) = create_test_server(farsi_content).await;
-
-        let response = server.get("/").await;
-        let body = response.text();
-
+        // Code blocks are scoped to LTR within RTL content
         assert!(
-            body.contains(r#"id="content" dir="rtl""#),
-            "Farsi content should have dir=\"rtl\" attribute"
+            body.contains("#content pre, #content code {\n            direction: ltr;"),
+            "Code blocks should be forced LTR via #content pre/code selector"
         );
-    }
 
-    #[tokio::test]
-    async fn test_rtl_font_supports_multiple_scripts() {
-        let arabic_content = "# مرحبا بالعالم\n\nهذا محتوى باللغة العربية.";
-        let (server, _temp_file) = create_test_server(arabic_content).await;
-
-        let response = server.get("/").await;
-        let body = response.text();
-
-        // Check for both Arabic and Hebrew fonts in the stack
+        // RTL font stack applied
         assert!(
-            body.contains("Arial Arabic") || body.contains("Arabic Typesetting"),
-            "Arabic fonts should be in font stack for RTL content"
+            body.contains("Arial Hebrew"),
+            "RTL font stack should be present"
         );
-    }
 
-    // detect_rtl unit tests
-
-    #[test]
-    fn test_detect_rtl_hebrew() {
-        assert!(detect_rtl("שלום עולם"), "Hebrew text should be detected as RTL");
-    }
-
-    #[test]
-    fn test_detect_rtl_english() {
-        assert!(!detect_rtl("Hello world"), "English text should not be detected as RTL");
-    }
-
-    #[test]
-    fn test_detect_rtl_empty() {
-        assert!(!detect_rtl(""), "Empty text should not be detected as RTL");
-    }
-
-    #[test]
-    fn test_detect_rtl_hebrew_majority() {
-        assert!(detect_rtl("שלום עולם Hello"), "Text with Hebrew majority should be detected as RTL");
-    }
-
-    #[test]
-    fn test_detect_rtl_english_majority() {
-        assert!(!detect_rtl("Hello שלום world"), "Text with English majority should not be detected as RTL");
-    }
-
-    #[test]
-    fn test_detect_rtl_boundary() {
-        // Exactly 50% (2 Hebrew, 2 English) — should trigger RTL
-        assert!(detect_rtl("שא ab"), "Text at 50% Hebrew should be detected as RTL");
-    }
-
-    #[test]
-    fn test_detect_rtl_arabic() {
-        assert!(detect_rtl("مرحبا بالعالم"), "Arabic text should be detected as RTL");
-    }
-
-    #[test]
-    fn test_detect_rtl_farsi() {
-        assert!(detect_rtl("سلام جهان"), "Farsi text should be detected as RTL");
-    }
-
-    #[test]
-    fn test_detect_rtl_mixed_arabic_english() {
-        assert!(detect_rtl("مرحبا hello عالم"), "Text with Arabic majority should be detected as RTL");
-    }
-
-    #[test]
-    fn test_detect_rtl_syriac() {
-        assert!(detect_rtl("ܠܐ ܬܦܢܐ"), "Syriac text should be detected as RTL");
-    }
-
-    // Fixture file tests
-
-    fn read_fixture(filename: &str) -> String {
-        let fixture_path = Path::new("tests/fixtures").join(filename);
-        fs::read_to_string(fixture_path)
-            .unwrap_or_else(|_| panic!("Failed to read fixture file: {}", filename))
-    }
-
-    #[test]
-    fn test_hebrew_fixture_file_is_rtl() {
-        assert!(detect_rtl(&read_fixture("hebrew.md")));
-    }
-
-    #[test]
-    fn test_arabic_fixture_file_is_rtl() {
-        assert!(detect_rtl(&read_fixture("arabic.md")));
-    }
-
-    #[test]
-    fn test_farsi_fixture_file_is_rtl() {
-        assert!(detect_rtl(&read_fixture("farsi.md")));
-    }
-
-    #[test]
-    fn test_english_fixture_file_is_ltr() {
-        assert!(!detect_rtl(&read_fixture("english.md")));
+        // Blockquotes use logical properties (no physical border-left/right)
+        assert!(
+            body.contains("border-inline-start:"),
+            "Blockquotes should use border-inline-start"
+        );
+        assert!(
+            !body.contains("border-left:"),
+            "Blockquotes should not use physical border-left"
+        );
     }
 }
