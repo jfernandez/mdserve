@@ -84,10 +84,16 @@ struct MarkdownState {
     tracked_files: HashMap<String, TrackedFile>,
     is_directory_mode: bool,
     change_tx: broadcast::Sender<ServerMessage>,
+    rtl: bool,
 }
 
 impl MarkdownState {
-    fn new(base_dir: PathBuf, file_paths: Vec<PathBuf>, is_directory_mode: bool) -> Result<Self> {
+    fn new(
+        base_dir: PathBuf,
+        file_paths: Vec<PathBuf>,
+        is_directory_mode: bool,
+        rtl: bool,
+    ) -> Result<Self> {
         let (change_tx, _) = broadcast::channel::<ServerMessage>(16);
 
         let mut tracked_files = HashMap::new();
@@ -114,6 +120,7 @@ impl MarkdownState {
             tracked_files,
             is_directory_mode,
             change_tx,
+            rtl,
         })
     }
 
@@ -145,13 +152,14 @@ impl MarkdownState {
 
         let metadata = fs::metadata(&file_path)?;
         let content = fs::read_to_string(&file_path)?;
+        let html = Self::markdown_to_html(&content)?;
 
         self.tracked_files.insert(
             filename,
             TrackedFile {
                 path: file_path,
                 last_modified: metadata.modified()?,
-                html: Self::markdown_to_html(&content)?,
+                html,
             },
         );
 
@@ -163,10 +171,10 @@ impl MarkdownState {
         options.compile.allow_dangerous_html = true;
         options.parse.constructs.frontmatter = true;
 
-        let html_body = markdown::to_html_with_options(content, &options)
+        let html = markdown::to_html_with_options(content, &options)
             .unwrap_or_else(|_| "Error parsing markdown".to_string());
 
-        Ok(html_body)
+        Ok(html)
     }
 }
 
@@ -266,6 +274,7 @@ fn new_router(
     base_dir: PathBuf,
     tracked_files: Vec<PathBuf>,
     is_directory_mode: bool,
+    rtl: bool,
 ) -> Result<Router> {
     let base_dir = base_dir.canonicalize()?;
 
@@ -273,6 +282,7 @@ fn new_router(
         base_dir.clone(),
         tracked_files,
         is_directory_mode,
+        rtl,
     )?));
 
     let watcher_state = state.clone();
@@ -337,11 +347,12 @@ pub(crate) async fn serve_markdown(
     hostname: impl AsRef<str>,
     port: u16,
     open: bool,
+    rtl: bool,
 ) -> Result<()> {
     let hostname = hostname.as_ref();
 
     let first_file = tracked_files.first().cloned();
-    let router = new_router(base_dir.clone(), tracked_files, is_directory_mode)?;
+    let router = new_router(base_dir.clone(), tracked_files, is_directory_mode, rtl)?;
 
     let (listener, actual_port) = bind_with_retry(hostname, port).await?;
 
@@ -509,6 +520,7 @@ async fn render_markdown(state: &MarkdownState, current_file: &str) -> (StatusCo
             show_navigation => true,
             files => files,
             current_file => current_file,
+            is_rtl => state.rtl,
         }) {
             Ok(r) => r,
             Err(e) => {
@@ -523,6 +535,7 @@ async fn render_markdown(state: &MarkdownState, current_file: &str) -> (StatusCo
             content => content,
             mermaid_enabled => has_mermaid,
             show_navigation => false,
+            is_rtl => state.rtl,
         }) {
             Ok(r) => r,
             Err(e) => {
@@ -863,7 +876,11 @@ mod tests {
         "---\ntitle: Test Post\nauthor: Name\n---\n\n# Test Post\n";
     const TOML_FRONTMATTER_CONTENT: &str = "+++\ntitle = \"Test Post\"\n+++\n\n# Test Post\n";
 
-    fn create_test_server_impl(content: &str, use_http: bool) -> (TestServer, NamedTempFile) {
+    fn create_test_server_impl(
+        content: &str,
+        use_http: bool,
+        rtl: bool,
+    ) -> (TestServer, NamedTempFile) {
         let temp_file = Builder::new()
             .suffix(".md")
             .tempfile()
@@ -882,7 +899,7 @@ mod tests {
         let tracked_files = vec![canonical_path];
         let is_directory_mode = false;
 
-        let router = new_router(base_dir, tracked_files, is_directory_mode)
+        let router = new_router(base_dir, tracked_files, is_directory_mode, rtl)
             .expect("Failed to create router");
 
         let server = if use_http {
@@ -898,11 +915,11 @@ mod tests {
     }
 
     async fn create_test_server(content: &str) -> (TestServer, NamedTempFile) {
-        create_test_server_impl(content, false)
+        create_test_server_impl(content, false, false)
     }
 
     async fn create_test_server_with_http(content: &str) -> (TestServer, NamedTempFile) {
-        create_test_server_impl(content, true)
+        create_test_server_impl(content, true, false)
     }
 
     fn create_directory_server_impl(use_http: bool) -> (TestServer, TempDir) {
@@ -919,7 +936,7 @@ mod tests {
         let tracked_files = scan_markdown_files(&base_dir).expect("Failed to scan markdown files");
         let is_directory_mode = true;
 
-        let router = new_router(base_dir, tracked_files, is_directory_mode)
+        let router = new_router(base_dir, tracked_files, is_directory_mode, false)
             .expect("Failed to create router");
 
         let server = if use_http {
@@ -1054,7 +1071,7 @@ fn main() {
         let base_dir = temp_dir.path().to_path_buf();
         let tracked_files = vec![md_path];
         let is_directory_mode = false;
-        let router = new_router(base_dir, tracked_files, is_directory_mode)
+        let router = new_router(base_dir, tracked_files, is_directory_mode, false)
             .expect("Failed to create router");
         let server = TestServer::new(router).expect("Failed to create test server");
 
@@ -1083,7 +1100,7 @@ fn main() {
         let base_dir = temp_dir.path().to_path_buf();
         let tracked_files = vec![md_path];
         let is_directory_mode = false;
-        let router = new_router(base_dir, tracked_files, is_directory_mode)
+        let router = new_router(base_dir, tracked_files, is_directory_mode, false)
             .expect("Failed to create router");
         let server = TestServer::new(router).expect("Failed to create test server");
 
@@ -1698,6 +1715,104 @@ classDiagram
         assert!(
             !final_body.contains("Content of test1"),
             "Should not serve old content"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rtl_flag_sets_dir_attribute() {
+        let (server, _temp_file) = create_test_server_impl("# Hello\n\nSome content.", false, true);
+
+        let response = server.get("/").await;
+        let body = response.text();
+
+        assert!(
+            body.contains(r#"id="content" dir="rtl""#),
+            "RTL flag should set dir=\"rtl\" on content div"
+        );
+        assert!(
+            body.contains("Arial Hebrew"),
+            "RTL flag should include RTL font stack"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_no_rtl_flag_no_dir_attribute() {
+        let (server, _temp_file) =
+            create_test_server_impl("# Hello\n\nSome content.", false, false);
+
+        let response = server.get("/").await;
+        let body = response.text();
+
+        assert!(
+            !body.contains(r#"dir="rtl""#),
+            "Without RTL flag, content should not have dir=\"rtl\""
+        );
+    }
+
+    #[tokio::test]
+    async fn test_code_blocks_ltr_in_rtl_mode() {
+        let content_with_code = "# Title\n\n```\ncode block\n```";
+        let (server, _temp_file) = create_test_server_impl(content_with_code, false, true);
+
+        let response = server.get("/").await;
+        let body = response.text();
+
+        assert!(
+            body.contains("direction: ltr"),
+            "Code blocks should be forced LTR in RTL mode"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_no_direction_override_without_rtl_flag() {
+        let content_with_code = "# Hello\n\n```\ncode block\n```";
+        let (server, _temp_file) = create_test_server_impl(content_with_code, false, false);
+
+        let response = server.get("/").await;
+        let body = response.text();
+
+        assert!(
+            !body.contains("direction: ltr"),
+            "Without RTL flag, no direction override should be present"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rtl_flag_renders_fixture() {
+        let content =
+            fs::read_to_string("tests/fixtures/rtl.md").expect("Failed to read RTL fixture");
+        let (server, _temp_file) = create_test_server_impl(&content, false, true);
+
+        let response = server.get("/").await;
+        assert_eq!(response.status_code(), 200);
+        let body = response.text();
+
+        // Content div gets dir="rtl"
+        assert!(
+            body.contains(r#"id="content" dir="rtl""#),
+            "Content div should have dir=\"rtl\""
+        );
+
+        // Code blocks are scoped to LTR within RTL content
+        assert!(
+            body.contains("#content pre, #content code {\n            direction: ltr;"),
+            "Code blocks should be forced LTR via #content pre/code selector"
+        );
+
+        // RTL font stack applied
+        assert!(
+            body.contains("Arial Hebrew"),
+            "RTL font stack should be present"
+        );
+
+        // Blockquotes use logical properties (no physical border-left/right)
+        assert!(
+            body.contains("border-inline-start:"),
+            "Blockquotes should use border-inline-start"
+        );
+        assert!(
+            !body.contains("border-left:"),
+            "Blockquotes should not use physical border-left"
         );
     }
 }

@@ -25,6 +25,10 @@ struct Args {
     /// Open the preview in the default browser
     #[arg(short, long)]
     open: bool,
+
+    /// Enable right-to-left rendering
+    #[arg(long)]
+    rtl: bool,
 }
 
 #[tokio::main]
@@ -59,6 +63,7 @@ async fn main() -> Result<()> {
         args.hostname,
         args.port,
         args.open,
+        args.rtl,
     )
     .await?;
 
