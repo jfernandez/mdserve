@@ -88,7 +88,12 @@ struct MarkdownState {
 }
 
 impl MarkdownState {
-    fn new(base_dir: PathBuf, file_paths: Vec<PathBuf>, is_directory_mode: bool, rtl: bool) -> Result<Self> {
+    fn new(
+        base_dir: PathBuf,
+        file_paths: Vec<PathBuf>,
+        is_directory_mode: bool,
+        rtl: bool,
+    ) -> Result<Self> {
         let (change_tx, _) = broadcast::channel::<ServerMessage>(16);
 
         let mut tracked_files = HashMap::new();
@@ -1715,8 +1720,7 @@ classDiagram
 
     #[tokio::test]
     async fn test_rtl_flag_sets_dir_attribute() {
-        let (server, _temp_file) =
-            create_test_server_impl("# Hello\n\nSome content.", false, true);
+        let (server, _temp_file) = create_test_server_impl("# Hello\n\nSome content.", false, true);
 
         let response = server.get("/").await;
         let body = response.text();
@@ -1748,8 +1752,7 @@ classDiagram
     #[tokio::test]
     async fn test_code_blocks_ltr_in_rtl_mode() {
         let content_with_code = "# Title\n\n```\ncode block\n```";
-        let (server, _temp_file) =
-            create_test_server_impl(content_with_code, false, true);
+        let (server, _temp_file) = create_test_server_impl(content_with_code, false, true);
 
         let response = server.get("/").await;
         let body = response.text();
@@ -1763,8 +1766,7 @@ classDiagram
     #[tokio::test]
     async fn test_no_direction_override_without_rtl_flag() {
         let content_with_code = "# Hello\n\n```\ncode block\n```";
-        let (server, _temp_file) =
-            create_test_server_impl(content_with_code, false, false);
+        let (server, _temp_file) = create_test_server_impl(content_with_code, false, false);
 
         let response = server.get("/").await;
         let body = response.text();
@@ -1777,8 +1779,8 @@ classDiagram
 
     #[tokio::test]
     async fn test_rtl_flag_renders_fixture() {
-        let content = fs::read_to_string("tests/fixtures/rtl.md")
-            .expect("Failed to read RTL fixture");
+        let content =
+            fs::read_to_string("tests/fixtures/rtl.md").expect("Failed to read RTL fixture");
         let (server, _temp_file) = create_test_server_impl(&content, false, true);
 
         let response = server.get("/").await;
