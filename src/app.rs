@@ -73,6 +73,87 @@ fn is_markdown_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Transforms a single GitHub's Alert (aka callout or admonition) from raw text to CSS classes for proper
+/// styling in the frontend. This only handles one at a time, and returns `None` when none is found.
+fn transform_github_alert_blockquote(inner: &str) -> Option<String> {
+    let first_paragraph_start = inner.find("<p>")?;
+    if !inner[..first_paragraph_start].trim().is_empty() {
+        return None;
+    }
+
+    let paragraph_content_start = first_paragraph_start + "<p>".len();
+    let paragraph_end_relative = inner[paragraph_content_start..].find("</p>")?;
+    let paragraph_content_end = paragraph_content_start + paragraph_end_relative;
+    let first_paragraph_content = &inner[paragraph_content_start..paragraph_content_end];
+
+    let trimmed = first_paragraph_content.trim_start();
+    let marker_start = trimmed.find("[!")?;
+    if marker_start != 0 {
+        return None;
+    }
+
+    let marker_end = trimmed.find(']')?;
+    let marker = &trimmed[2..marker_end];
+    let title = match marker {
+        "NOTE" => Some("Note"),
+        "TIP" => Some("Tip"),
+        "IMPORTANT" => Some("Important"),
+        "WARNING" => Some("Warning"),
+        "CAUTION" => Some("Caution"),
+        _ => None,
+    }?;
+
+    let after_marker = trimmed[(marker_end + 1)..].trim_start();
+    let mut alert_body = String::new();
+
+    if !after_marker.is_empty() {
+        alert_body.push_str("<p>");
+        alert_body.push_str(after_marker);
+        alert_body.push_str("</p>");
+    }
+
+    let remaining = &inner[(paragraph_content_end + "</p>".len())..];
+    alert_body.push_str(remaining);
+
+    Some(format!(
+        "<blockquote class=\"markdown-alert markdown-alert-{}\"><p class=\"markdown-alert-title\">{}</p>{}</blockquote>",
+        marker.to_ascii_lowercase(),
+        title,
+        alert_body
+    ))
+}
+
+/// Transforms all GitHub Alerts (aka callouts or admonitions) in the HTML to proper styled CSS classes.
+/// The string is transformed in-place, i.e. without creating a whole new one; this means it must
+/// accept a `&mut String`.
+fn transform_github_alerts_html_in_place(html: &mut String) {
+    let mut replacements = Vec::new();
+    let mut search_start = 0;
+
+    while let Some(rel_start) = html[search_start..].find("<blockquote>") {
+        let block_start = search_start + rel_start;
+        let inner_start = block_start + "<blockquote>".len();
+
+        let Some(rel_end) = html[inner_start..].find("</blockquote>") else {
+            break;
+        };
+
+        let inner_end = inner_start + rel_end;
+        let block_end = inner_end + "</blockquote>".len();
+        let inner = &html[inner_start..inner_end];
+
+        if let Some(alert_html) = transform_github_alert_blockquote(inner) {
+            replacements.push((block_start, block_end, alert_html));
+        }
+
+        search_start = block_end;
+    }
+
+    for (start, end, replacement) in replacements.into_iter().rev() {
+        html.replace_range(start..end, &replacement);
+    }
+}
+
 struct TrackedFile {
     path: PathBuf,
     last_modified: SystemTime,
@@ -163,9 +244,10 @@ impl MarkdownState {
         options.compile.allow_dangerous_html = true;
         options.parse.constructs.frontmatter = true;
 
-        let html_body = markdown::to_html_with_options(content, &options)
+        let mut html_body = markdown::to_html_with_options(content, &options)
             .unwrap_or_else(|_| "Error parsing markdown".to_string());
 
+        transform_github_alerts_html_in_place(&mut html_body);
         Ok(html_body)
     }
 }
@@ -1029,6 +1111,58 @@ fn main() {
         assert!(body.contains("<del>deleted text</del>"));
         assert!(body.contains("<pre>"));
         assert!(body.contains("fn main()"));
+    }
+
+    #[tokio::test]
+    async fn test_github_alert_blocks_are_supported() {
+        let markdown_content = r#"# Alert Test
+
+> [!NOTE]
+> Note details
+
+> [!TIP]
+> Tip details
+
+> [!IMPORTANT]
+> Important details
+
+> [!WARNING]
+> Warning details
+
+> [!CAUTION]
+> Caution details
+"#;
+
+        let (server, _temp_file) = create_test_server(markdown_content).await;
+
+        let response = server.get("/").await;
+
+        assert_eq!(response.status_code(), 200);
+        let body = response.text();
+
+        assert!(!body.contains("[!NOTE]"));
+        assert!(!body.contains("[!TIP]"));
+        assert!(!body.contains("[!IMPORTANT]"));
+        assert!(!body.contains("[!WARNING]"));
+        assert!(!body.contains("[!CAUTION]"));
+
+        assert!(body.contains(r#"<blockquote class="markdown-alert markdown-alert-note">"#));
+        assert!(body.contains(r#"<blockquote class="markdown-alert markdown-alert-tip">"#));
+        assert!(body.contains(r#"<blockquote class="markdown-alert markdown-alert-important">"#));
+        assert!(body.contains(r#"<blockquote class="markdown-alert markdown-alert-warning">"#));
+        assert!(body.contains(r#"<blockquote class="markdown-alert markdown-alert-caution">"#));
+
+        assert!(body.contains(r#"<p class="markdown-alert-title">Note</p>"#));
+        assert!(body.contains(r#"<p class="markdown-alert-title">Tip</p>"#));
+        assert!(body.contains(r#"<p class="markdown-alert-title">Important</p>"#));
+        assert!(body.contains(r#"<p class="markdown-alert-title">Warning</p>"#));
+        assert!(body.contains(r#"<p class="markdown-alert-title">Caution</p>"#));
+
+        assert!(body.contains("Note details"));
+        assert!(body.contains("Tip details"));
+        assert!(body.contains("Important details"));
+        assert!(body.contains("Warning details"));
+        assert!(body.contains("Caution details"));
     }
 
     #[tokio::test]
