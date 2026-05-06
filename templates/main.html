@@ -449,6 +449,14 @@
         a { color: var(--link-color); text-decoration: none; }
         a:hover { text-decoration: underline; }
         img { max-width: 100%; height: auto; }
+
+        /* Task list checkboxes: hide bullet when item has a checkbox */
+        li:has(> input[type="checkbox"]) {
+            list-style: none;
+        }
+        input[type="checkbox"] {
+            margin-inline-end: 0.25em;
+        }
     </style>
 
     {% if mermaid_enabled %}
