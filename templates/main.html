@@ -402,6 +402,101 @@
             color: #cdd6f4;
         }
 
+        /* Mermaid diagram wrapper + expand affordance */
+        .diagram-wrapper {
+            position: relative;
+        }
+
+        .diagram-expand-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: var(--code-bg);
+            border: 1px solid var(--border-color-light);
+            border-radius: 6px;
+            padding: 6px;
+            cursor: pointer;
+            color: var(--text-color);
+            opacity: 0;
+            transition: opacity 0.2s var(--transition-timing), background 0.2s var(--transition-timing);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2;
+        }
+
+        .diagram-wrapper:hover .diagram-expand-btn,
+        .diagram-wrapper:focus-within .diagram-expand-btn,
+        .diagram-expand-btn:focus-visible {
+            opacity: 1;
+        }
+
+        .diagram-expand-btn:hover,
+        .diagram-expand-btn:focus-visible {
+            background: var(--border-color-light);
+            outline: none;
+        }
+
+        .diagram-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.65);
+            z-index: 1000;
+            backdrop-filter: blur(4px);
+        }
+
+        .diagram-modal.show {
+            display: flex;
+        }
+
+        .diagram-modal-content {
+            flex: 1;
+            margin: 24px;
+            background: var(--bg-color);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            overflow: hidden;
+            position: relative;
+            cursor: grab;
+        }
+
+        .diagram-modal-content:active {
+            cursor: grabbing;
+        }
+
+        .diagram-modal-content > svg {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        .diagram-modal-close {
+            position: absolute;
+            top: 32px;
+            right: 32px;
+            background: var(--code-bg);
+            border: 1px solid var(--border-color-light);
+            border-radius: 6px;
+            padding: 6px;
+            color: var(--text-color);
+            cursor: pointer;
+            z-index: 1001;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s var(--transition-timing);
+        }
+
+        .diagram-modal-close:hover,
+        .diagram-modal-close:focus-visible {
+            background: var(--border-color-light);
+            outline: none;
+        }
+
         pre {
             background-color: var(--code-bg);
             border-radius: 6px;
@@ -453,6 +548,7 @@
 
     {% if mermaid_enabled %}
     <script src="/mermaid.min.js"></script>
+    <script src="/panzoom.min.js"></script>
     {% endif %}
     <script>
         let lastModified = Date.now();
@@ -548,7 +644,6 @@
                 // Find and transform mermaid code blocks
                 transformMermaidCodeBlocks();
 
-                // Render all mermaid diagrams
                 mermaid.run();
             }
         }
@@ -570,11 +665,34 @@
                     mermaidDiv.textContent = mermaidCode;
                     mermaidDiv.setAttribute('data-original', mermaidCode);
 
-                    // Replace the pre/code block with the mermaid div
-                    preElement.parentElement.replaceChild(mermaidDiv, preElement);
+                    // Create an expand button for pan/zoom of the mermaid diagram
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'diagram-expand-btn';
+                    btn.setAttribute('aria-label', 'Expand diagram');
+                    btn.innerHTML = EXPAND_ICON_SVG;
+                    btn.addEventListener('click', () => openDiagramModal(mermaidDiv));
+
+                    // Create a wrapper we can put the mermaid div and expand button in
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'diagram-wrapper';
+                    wrapper.appendChild(mermaidDiv);
+                    wrapper.appendChild(btn);
+
+                    // Replace the pre/code block with the wrapped mermaid div
+                    preElement.parentElement.replaceChild(wrapper, preElement);
                 }
             });
         }
+
+        const EXPAND_ICON_SVG = `
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="15 3 21 3 21 9"></polyline>
+                <polyline points="9 21 3 21 3 15"></polyline>
+                <line x1="21" y1="3" x2="14" y2="10"></line>
+                <line x1="3" y1="21" x2="10" y2="14"></line>
+            </svg>`;
+
 
         function updateMermaidTheme() {
             if (typeof mermaid !== 'undefined') {
@@ -598,6 +716,47 @@
 
                 mermaid.run();
             }
+        }
+
+        // Fullscreen modal with pan/zoom
+        function openDiagramModal(sourceDiagram) {
+            const svg = sourceDiagram.querySelector('svg');
+            if (!svg || typeof panzoom === 'undefined') {
+                return;
+            }
+
+            closeDiagramModal();
+
+            const modal = document.getElementById('diagramModal');
+            const container = document.getElementById('diagramModalContent');
+
+            const clone = svg.cloneNode(true);
+            container.replaceChildren(clone);
+
+            modal.classList.add('show');
+
+            // Defer panzoom init until after layout: bounds:true samples the
+            // bounding rect at construction, and the clone was just inserted.
+            requestAnimationFrame(() => {
+                modal._panzoomInstance = panzoom(clone, {
+                    maxZoom: 20,
+                    minZoom: 0.1,
+                    bounds: true,
+                    boundsPadding: 0.1,
+                    zoomDoubleClickSpeed: 1,
+                });
+            });
+        }
+
+        function closeDiagramModal() {
+            const modal = document.getElementById('diagramModal');
+            if (!modal.classList.contains('show')) {
+                return;
+            }
+            modal._panzoomInstance?.dispose();
+            delete modal._panzoomInstance;
+            document.getElementById('diagramModalContent').replaceChildren();
+            modal.classList.remove('show');
         }
 
         // Auto-refresh functionality using WebSocket
@@ -641,18 +800,29 @@
             setupLiveReload();
 
             // Modal close functionality
-            const modal = document.getElementById('themeModal');
-
-            // Close modal when clicking outside
-            modal.addEventListener('click', function(e) {
-                if (e.target === modal) {
+            const themeModal = document.getElementById('themeModal');
+            themeModal.addEventListener('click', function(e) {
+                if (e.target === themeModal) {
                     closeThemeModal();
                 }
             });
 
-            // Close modal with ESC key
+            const diagramModal = document.getElementById('diagramModal');
+            diagramModal.addEventListener('click', function(e) {
+                if (e.target === diagramModal) {
+                    closeDiagramModal();
+                }
+            });
+            document.getElementById('diagramModalClose')
+                .addEventListener('click', closeDiagramModal);
+
             document.addEventListener('keydown', function(e) {
-                if (e.key === 'Escape' && modal.classList.contains('show')) {
+                if (e.key !== 'Escape') {
+                    return;
+                }
+                if (diagramModal.classList.contains('show')) {
+                    closeDiagramModal();
+                } else if (themeModal.classList.contains('show')) {
                     closeThemeModal();
                 }
             });
@@ -686,6 +856,16 @@
 <button class="theme-toggle" onclick="openThemeModal()">🎨</button>
 <div id="content">
 {{ content }}
+</div>
+
+<div class="diagram-modal" id="diagramModal" role="dialog" aria-label="Expanded diagram">
+    <button type="button" class="diagram-modal-close" id="diagramModalClose" aria-label="Close diagram">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+    </button>
+    <div class="diagram-modal-content" id="diagramModalContent"></div>
 </div>
 
 <div class="theme-modal" id="themeModal">
