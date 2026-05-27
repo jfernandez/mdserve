@@ -30,7 +30,9 @@ use tower_http::cors::CorsLayer;
 const TEMPLATE_NAME: &str = "main.html";
 static TEMPLATE_ENV: OnceLock<Environment<'static>> = OnceLock::new();
 const MERMAID_JS: &str = include_str!("../static/js/mermaid.min.js");
-const MERMAID_ETAG: &str = concat!("\"", env!("CARGO_PKG_VERSION"), "\"");
+const PANZOOM_JS: &str = include_str!("../static/js/panzoom.min.js");
+const MERMAID_ETAG: &str = concat!("\"", env!("CARGO_PKG_VERSION"), "-mermaid\"");
+const PANZOOM_ETAG: &str = concat!("\"", env!("CARGO_PKG_VERSION"), "-panzoom\"");
 const MAX_PORT_ATTEMPTS: u16 = 10;
 
 type SharedMarkdownState = Arc<Mutex<MarkdownState>>;
@@ -300,6 +302,7 @@ fn new_router(
         .route("/", get(serve_html_root))
         .route("/ws", get(websocket_handler))
         .route("/mermaid.min.js", get(serve_mermaid_js))
+        .route("/panzoom.min.js", get(serve_panzoom_js))
         .route("/*filename", get(serve_file))
         .layer(CorsLayer::permissive())
         .with_state(state);
@@ -546,27 +549,42 @@ async fn render_markdown(state: &MarkdownState, current_file: &str) -> (StatusCo
 }
 
 async fn serve_mermaid_js(headers: HeaderMap) -> impl IntoResponse {
-    if is_etag_match(&headers) {
-        return mermaid_response(StatusCode::NOT_MODIFIED, None);
-    }
-
-    mermaid_response(StatusCode::OK, Some(MERMAID_JS))
+    serve_bundled_js(&headers, MERMAID_JS, MERMAID_ETAG)
 }
 
-fn is_etag_match(headers: &HeaderMap) -> bool {
+async fn serve_panzoom_js(headers: HeaderMap) -> impl IntoResponse {
+    serve_bundled_js(&headers, PANZOOM_JS, PANZOOM_ETAG)
+}
+
+fn serve_bundled_js(
+    headers: &HeaderMap,
+    content: &'static str,
+    etag: &'static str,
+) -> axum::response::Response {
+    if is_etag_match(headers, etag) {
+        return js_response(StatusCode::NOT_MODIFIED, None, etag);
+    }
+    js_response(StatusCode::OK, Some(content), etag)
+}
+
+fn is_etag_match(headers: &HeaderMap, etag: &str) -> bool {
     headers
         .get(header::IF_NONE_MATCH)
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|etags| etags.split(',').any(|tag| tag.trim() == MERMAID_ETAG))
+        .is_some_and(|etags| etags.split(',').any(|tag| tag.trim() == etag))
 }
 
-fn mermaid_response(status: StatusCode, body: Option<&'static str>) -> impl IntoResponse {
+fn js_response(
+    status: StatusCode,
+    body: Option<&'static str>,
+    etag: &'static str,
+) -> axum::response::Response {
     // Use no-cache to force revalidation on each request. This ensures clients
-    // get updated content when mdserve is rebuilt with a new Mermaid version,
+    // get updated content when mdserve is rebuilt with a new bundled version,
     // while still benefiting from 304 responses via ETag matching.
     let headers = [
         (header::CONTENT_TYPE, "application/javascript"),
-        (header::ETAG, MERMAID_ETAG),
+        (header::ETAG, etag),
         (header::CACHE_CONTROL, "public, no-cache"),
     ];
 
@@ -1167,6 +1185,7 @@ console.log("Hello World");
         );
 
         assert!(body.contains(r#"<script src="/mermaid.min.js"></script>"#));
+        assert!(body.contains(r#"<script src="/panzoom.min.js"></script>"#));
         assert!(body.contains("function initMermaid()"));
         assert!(body.contains("function transformMermaidCodeBlocks()"));
         assert!(body.contains("function getMermaidTheme()"));
@@ -1250,6 +1269,31 @@ classDiagram
             .matches(r#"<script src="/mermaid.min.js"></script>"#)
             .count();
         assert_eq!(script_occurrences, 1);
+    }
+
+    #[tokio::test]
+    async fn test_panzoom_js_etag_caching() {
+        let (server, _temp_file) = create_test_server("# Test").await;
+
+        let response = server.get("/panzoom.min.js").await;
+        assert_eq!(response.status_code(), 200);
+
+        let etag = response.header("etag");
+        assert!(!etag.is_empty(), "ETag header should be present");
+
+        let content_type = response.header("content-type");
+        assert_eq!(content_type, "application/javascript");
+        assert!(!response.as_bytes().is_empty());
+
+        let response_304 = server
+            .get("/panzoom.min.js")
+            .add_header(
+                axum::http::header::IF_NONE_MATCH,
+                axum::http::HeaderValue::from_str(etag.to_str().unwrap()).unwrap(),
+            )
+            .await;
+        assert_eq!(response_304.status_code(), 304);
+        assert!(response_304.as_bytes().is_empty());
     }
 
     #[tokio::test]
