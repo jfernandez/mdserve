@@ -21,6 +21,11 @@ use std::{
     sync::{Arc, OnceLock},
     time::SystemTime,
 };
+use syntect::{
+    html::{ClassStyle, ClassedHTMLGenerator},
+    parsing::{SyntaxReference, SyntaxSet},
+    util::LinesWithEndings,
+};
 use tokio::{
     net::TcpListener,
     sync::{broadcast, mpsc, Mutex},
@@ -32,6 +37,10 @@ static TEMPLATE_ENV: OnceLock<Environment<'static>> = OnceLock::new();
 const MERMAID_JS: &str = include_str!("../static/js/mermaid.min.js");
 const MERMAID_ETAG: &str = concat!("\"", env!("CARGO_PKG_VERSION"), "\"");
 const MAX_PORT_ATTEMPTS: u16 = 10;
+
+/// Prefix keeps syntect's scope classes from colliding with page styles.
+const HL_CLASS_STYLE: ClassStyle = ClassStyle::SpacedPrefixed { prefix: "hl-" };
+static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
 
 type SharedMarkdownState = Arc<Mutex<MarkdownState>>;
 
@@ -166,8 +175,142 @@ impl MarkdownState {
         let html_body = markdown::to_html_with_options(content, &options)
             .unwrap_or_else(|_| "Error parsing markdown".to_string());
 
-        Ok(html_body)
+        Ok(highlight_code_blocks(&html_body))
     }
+}
+
+fn syntax_set() -> &'static SyntaxSet {
+    // two-face bundles the Sublime defaults plus the extras bat ships
+    // (TypeScript, TOML, Dockerfile, Kotlin, Swift, Zig, ...), which agents
+    // emit often enough that the default set alone leaves visible gaps.
+    SYNTAX_SET.get_or_init(two_face::syntax::extra_newlines)
+}
+
+/// Applies syntax highlighting to fenced code blocks in already-rendered HTML.
+///
+/// The markdown crate exposes no hook for customizing code block output, so
+/// blocks are rewritten after the fact. Mermaid blocks are left untouched for
+/// the client-side renderer, as are blocks without a recognized language.
+fn highlight_code_blocks(html: &str) -> String {
+    const OPEN: &str = "<pre><code class=\"language-";
+    const ATTR_END: &str = "\">";
+    const CLOSE: &str = "</code></pre>";
+
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+
+    while let Some(open_at) = rest.find(OPEN) {
+        let tail = &rest[open_at + OPEN.len()..];
+        out.push_str(&rest[..open_at + OPEN.len()]);
+
+        // The language comes from the info string, where the markdown crate
+        // has already encoded any quote, so the first `">` ends the attribute.
+        let Some(lang_end) = tail.find(ATTR_END) else {
+            break;
+        };
+        let lang = &tail[..lang_end];
+        let body = &tail[lang_end + ATTR_END.len()..];
+
+        // Code content is entity-encoded, so it cannot contain the closing tag.
+        let Some(code_end) = body.find(CLOSE) else {
+            break;
+        };
+        let code = &body[..code_end];
+
+        out.push_str(lang);
+        out.push_str(ATTR_END);
+        match highlight(lang, code) {
+            Some(highlighted) => out.push_str(&highlighted),
+            None => out.push_str(code),
+        }
+
+        rest = &body[code_end..];
+    }
+
+    out.push_str(rest);
+    out
+}
+
+/// Highlights one entity-encoded code block, or returns `None` to leave it as is.
+fn highlight(lang: &str, encoded_code: &str) -> Option<String> {
+    if lang.eq_ignore_ascii_case("mermaid") {
+        return None;
+    }
+
+    let syntaxes = syntax_set();
+    let syntax = find_syntax(syntaxes, lang)?;
+    let code = decode_html_entities(encoded_code);
+
+    let mut generator =
+        ClassedHTMLGenerator::new_with_class_style(syntax, syntaxes, HL_CLASS_STYLE);
+    for line in LinesWithEndings::from(&code) {
+        generator
+            .parse_html_for_line_which_includes_newline(line)
+            .ok()?;
+    }
+
+    Some(generator.finalize())
+}
+
+fn find_syntax<'a>(syntaxes: &'a SyntaxSet, lang: &str) -> Option<&'a SyntaxReference> {
+    let lower = lang.to_ascii_lowercase();
+
+    syntaxes
+        .find_syntax_by_token(lang)
+        .or_else(|| syntaxes.find_syntax_by_token(&lower))
+        .or_else(|| syntax_alias(&lower).and_then(|token| syntaxes.find_syntax_by_token(token)))
+        .filter(|syntax| syntax.name != "Plain Text")
+}
+
+/// Maps fence labels that syntect does not resolve on its own.
+fn syntax_alias(lang: &str) -> Option<&'static str> {
+    Some(match lang {
+        "shell" | "shellscript" | "shell-session" | "console" => "sh",
+        "golang" => "go",
+        "c++" => "cpp",
+        "c#" | "csharp" => "cs",
+        "objective-c" | "objectivec" => "m",
+        "yml" => "yaml",
+        "jsonc" | "json5" => "json",
+        "kt" => "kotlin",
+        "terraform" => "tf",
+        "make" => "makefile",
+        "patch" => "diff",
+        "vue" | "svelte" => "html",
+        _ => return None,
+    })
+}
+
+/// Reverses the entity encoding the markdown crate applies to code content.
+fn decode_html_entities(input: &str) -> String {
+    const ENTITIES: [(&str, char); 4] = [
+        ("&amp;", '&'),
+        ("&lt;", '<'),
+        ("&gt;", '>'),
+        ("&quot;", '"'),
+    ];
+
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+
+    while let Some(amp_at) = rest.find('&') {
+        out.push_str(&rest[..amp_at]);
+        rest = &rest[amp_at..];
+
+        match ENTITIES.iter().find(|(entity, _)| rest.starts_with(entity)) {
+            Some((entity, decoded)) => {
+                out.push(*decoded);
+                rest = &rest[entity.len()..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest['&'.len_utf8()..];
+            }
+        }
+    }
+
+    out.push_str(rest);
+    out
 }
 
 /// Handles a markdown file that may have been created or modified.
@@ -758,6 +901,110 @@ mod tests {
     }
 
     #[test]
+    fn test_decode_html_entities() {
+        assert_eq!(decode_html_entities("plain text"), "plain text");
+        assert_eq!(
+            decode_html_entities("a &lt; b &amp;&amp; c &gt; d"),
+            "a < b && c > d"
+        );
+        assert_eq!(decode_html_entities("&quot;quoted&quot;"), "\"quoted\"");
+
+        // A literal ampersand survives, and encoded entities are not
+        // double-decoded into markup
+        assert_eq!(decode_html_entities("R&D"), "R&D");
+        assert_eq!(decode_html_entities("&amp;lt;"), "&lt;");
+    }
+
+    #[test]
+    fn test_syntax_alias_resolves_unknown_tokens() {
+        let syntaxes = syntax_set();
+
+        for lang in ["rust", "rs", "python", "js", "typescript", "toml", "yaml"] {
+            assert!(
+                find_syntax(syntaxes, lang).is_some(),
+                "expected a syntax for {lang}"
+            );
+        }
+
+        assert_eq!(
+            find_syntax(syntaxes, "shell").map(|s| s.name.as_str()),
+            find_syntax(syntaxes, "sh").map(|s| s.name.as_str())
+        );
+        assert_eq!(
+            find_syntax(syntaxes, "golang").map(|s| s.name.as_str()),
+            find_syntax(syntaxes, "go").map(|s| s.name.as_str())
+        );
+
+        assert!(find_syntax(syntaxes, "text").is_none());
+        assert!(find_syntax(syntaxes, "not-a-language").is_none());
+    }
+
+    #[test]
+    fn test_highlight_code_blocks_wraps_tokens_in_scope_classes() {
+        let html = MarkdownState::markdown_to_html("```rust\nlet x = 1;\n```\n")
+            .expect("Failed to render markdown");
+
+        assert!(html.starts_with(r#"<pre><code class="language-rust"><span class="hl-"#));
+        assert!(html.contains(r#"<span class="hl-storage hl-type hl-rust">let</span>"#));
+        assert!(html.contains(
+            r#"<span class="hl-constant hl-numeric hl-integer hl-decimal hl-rust">1</span>"#
+        ));
+        assert!(html.trim_end().ends_with("</code></pre>"));
+    }
+
+    #[test]
+    fn test_highlight_code_blocks_preserves_entity_encoding() {
+        let html = MarkdownState::markdown_to_html("```rust\nlet s = \"a & b <c>\";\n```\n")
+            .expect("Failed to render markdown");
+
+        // Characters that were encoded before highlighting must stay encoded
+        assert!(html.contains("a &amp; b &lt;c&gt;"));
+        assert!(!html.contains("a & b <c>"));
+    }
+
+    #[test]
+    fn test_highlight_code_blocks_leaves_untouched_blocks_alone() {
+        let mermaid = MarkdownState::markdown_to_html("```mermaid\ngraph TD\n  A --> B\n```\n")
+            .expect("Failed to render markdown");
+        assert_eq!(
+            mermaid.trim_end(),
+            "<pre><code class=\"language-mermaid\">graph TD\n  A --&gt; B\n</code></pre>"
+        );
+
+        let unknown = MarkdownState::markdown_to_html("```not-a-language\nx = 1\n```\n")
+            .expect("Failed to render markdown");
+        assert_eq!(
+            unknown.trim_end(),
+            "<pre><code class=\"language-not-a-language\">x = 1\n</code></pre>"
+        );
+
+        let no_lang = MarkdownState::markdown_to_html("```\nx = 1\n```\n")
+            .expect("Failed to render markdown");
+        assert_eq!(no_lang.trim_end(), "<pre><code>x = 1\n</code></pre>");
+    }
+
+    #[test]
+    fn test_highlight_code_blocks_handles_multiple_blocks() {
+        let html = MarkdownState::markdown_to_html(
+            "```rust\nlet x = 1;\n```\n\ntext\n\n```python\nx = 1\n```\n",
+        )
+        .expect("Failed to render markdown");
+
+        assert!(html.contains(r#"<pre><code class="language-rust"><span class="hl-"#));
+        assert!(html.contains(r#"<pre><code class="language-python"><span class="hl-"#));
+        assert!(html.contains("<p>text</p>"));
+        assert_eq!(html.matches("</code></pre>").count(), 2);
+    }
+
+    #[test]
+    fn test_inline_code_is_not_highlighted() {
+        let html = MarkdownState::markdown_to_html("Use `let x = 1;` here.\n")
+            .expect("Failed to render markdown");
+
+        assert_eq!(html.trim_end(), "<p>Use <code>let x = 1;</code> here.</p>");
+    }
+
+    #[test]
     fn test_scan_markdown_files_empty_directory() {
         let temp_dir = tempdir().expect("Failed to create temp dir");
 
@@ -1028,7 +1275,9 @@ fn main() {
         assert!(body.contains("<td>John</td>"));
         assert!(body.contains("<del>deleted text</del>"));
         assert!(body.contains("<pre>"));
-        assert!(body.contains("fn main()"));
+        // Code is split across highlight spans, so match on the tokens
+        assert!(body.contains(r#"<span class="hl-storage hl-type hl-function hl-rust">fn</span>"#));
+        assert!(body.contains(r#"<span class="hl-entity hl-name hl-function hl-rust">main</span>"#));
     }
 
     #[tokio::test]
@@ -1156,8 +1405,9 @@ console.log("Hello World");
         assert_eq!(response.status_code(), 200);
         let body = response.text();
 
-        assert!(body.contains(r#"class="language-mermaid""#));
-        assert!(body.contains("graph TD"));
+        // Mermaid blocks stay unhighlighted so the client-side renderer can
+        // read their textContent verbatim
+        assert!(body.contains(r#"<pre><code class="language-mermaid">graph TD"#));
 
         let has_raw_content = body.contains("A[Start] --> B{Decision}");
         let has_encoded_content = body.contains("A[Start] --&gt; B{Decision}");
@@ -1170,8 +1420,7 @@ console.log("Hello World");
         assert!(body.contains("function initMermaid()"));
         assert!(body.contains("function transformMermaidCodeBlocks()"));
         assert!(body.contains("function getMermaidTheme()"));
-        assert!(body.contains(r#"class="language-javascript""#));
-        assert!(body.contains("console.log"));
+        assert!(body.contains(r#"<pre><code class="language-javascript"><span class="hl-"#));
     }
 
     #[tokio::test]

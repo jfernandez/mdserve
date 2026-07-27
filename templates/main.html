@@ -62,6 +62,15 @@
             --content-max-width: 900px;
             --transition-speed: 0.3s;
             --transition-timing: ease;
+
+            /* Syntax highlighting (GitHub Light) */
+            --hl-comment: #6a737d;
+            --hl-keyword: #d73a49;
+            --hl-string: #032f62;
+            --hl-constant: #005cc5;
+            --hl-entity: #6f42c1;
+            --hl-support: #005cc5;
+            --hl-invalid: #b31d28;
         }
 
         [data-theme="dark"] {
@@ -73,6 +82,15 @@
             --blockquote-color: #8b949e;
             --link-color: #58a6ff;
             --table-header-bg: #161b22;
+
+            /* GitHub Dark */
+            --hl-comment: #8b949e;
+            --hl-keyword: #ff7b72;
+            --hl-string: #a5d6ff;
+            --hl-constant: #79c0ff;
+            --hl-entity: #d2a8ff;
+            --hl-support: #79c0ff;
+            --hl-invalid: #ffa198;
         }
 
         [data-theme="catppuccin-latte"] {
@@ -84,6 +102,14 @@
             --blockquote-color: #6c6f85;
             --link-color: #1e66f5;
             --table-header-bg: #ccd0da;
+
+            --hl-comment: #7c7f93;
+            --hl-keyword: #8839ef;
+            --hl-string: #40a02b;
+            --hl-constant: #fe640b;
+            --hl-entity: #1e66f5;
+            --hl-support: #179299;
+            --hl-invalid: #d20f39;
         }
 
         [data-theme="catppuccin-macchiato"] {
@@ -95,6 +121,14 @@
             --blockquote-color: #a5adcb;
             --link-color: #8aadf4;
             --table-header-bg: #363a4f;
+
+            --hl-comment: #939ab7;
+            --hl-keyword: #c6a0f6;
+            --hl-string: #a6da95;
+            --hl-constant: #f5a97f;
+            --hl-entity: #8aadf4;
+            --hl-support: #8bd5ca;
+            --hl-invalid: #ed8796;
         }
 
         [data-theme="catppuccin-mocha"] {
@@ -106,6 +140,14 @@
             --blockquote-color: #a6adc8;
             --link-color: #89b4fa;
             --table-header-bg: #313244;
+
+            --hl-comment: #9399b2;
+            --hl-keyword: #cba6f7;
+            --hl-string: #a6e3a1;
+            --hl-constant: #fab387;
+            --hl-entity: #89b4fa;
+            --hl-support: #94e2d5;
+            --hl-invalid: #f38ba8;
         }
 
         /* Common body styles */
@@ -418,6 +460,22 @@
             background-color: transparent;
             padding: 0;
         }
+
+        /* Syntax highlighting. Classes come from syntect scope atoms, so a span
+           may carry several of these at once (e.g. punctuation.definition.string
+           matches both .hl-punctuation and .hl-string). Rules are ordered from
+           least to most specific meaning, letting the later rule win the tie. */
+        .hl-entity { color: var(--hl-entity); }
+        .hl-support { color: var(--hl-support); }
+        .hl-constant { color: var(--hl-constant); }
+        .hl-keyword,
+        .hl-storage { color: var(--hl-keyword); }
+        .hl-string { color: var(--hl-string); }
+        .hl-comment {
+            color: var(--hl-comment);
+            font-style: italic;
+        }
+        .hl-invalid { color: var(--hl-invalid); }
         blockquote {
             border-left: 4px solid var(--border-color-light);
             padding-left: 16px;
