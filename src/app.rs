@@ -159,14 +159,24 @@ impl MarkdownState {
     }
 
     fn markdown_to_html(content: &str) -> Result<String> {
-        let mut options = markdown::Options::gfm();
-        options.compile.allow_dangerous_html = true;
-        options.parse.constructs.frontmatter = true;
+        let mut options = comrak::Options::default();
+        // GFM parity with the previous markdown-rs configuration.
+        options.extension.table = true;
+        options.extension.strikethrough = true;
+        options.extension.autolink = true;
+        options.extension.tasklist = true;
+        options.extension.footnotes = true;
+        options.extension.front_matter_delimiter = Some("---".to_string());
+        // Allow raw HTML in markdown (mirrors allow_dangerous_html).
+        options.render.r#unsafe = true;
 
-        let html_body = markdown::to_html_with_options(content, &options)
-            .unwrap_or_else(|_| "Error parsing markdown".to_string());
+        let mut plugins = comrak::options::Plugins::default();
+        let adapter = crate::highlight::SyntectAdapter;
+        plugins.render.codefence_syntax_highlighter = Some(&adapter);
 
-        Ok(html_body)
+        Ok(comrak::markdown_to_html_with_plugins(
+            content, &options, &plugins,
+        ))
     }
 }
 
@@ -516,6 +526,7 @@ async fn render_markdown(state: &MarkdownState, current_file: &str) -> (StatusCo
             files => files,
             current_file => current_file,
             page_title => page_title,
+            highlight_css => Value::from_safe_string(crate::highlight::highlight_css().to_string()),
         }) {
             Ok(r) => r,
             Err(e) => {
@@ -531,6 +542,7 @@ async fn render_markdown(state: &MarkdownState, current_file: &str) -> (StatusCo
             mermaid_enabled => has_mermaid,
             show_navigation => false,
             page_title => page_title,
+            highlight_css => Value::from_safe_string(crate::highlight::highlight_css().to_string()),
         }) {
             Ok(r) => r,
             Err(e) => {
@@ -1027,8 +1039,10 @@ fn main() {
         assert!(body.contains("<th>Name</th>"));
         assert!(body.contains("<td>John</td>"));
         assert!(body.contains("<del>deleted text</del>"));
-        assert!(body.contains("<pre>"));
-        assert!(body.contains("fn main()"));
+        assert!(body.contains(r#"<code class="language-rust">"#));
+        // Code is syntax-highlighted: tokens are wrapped in Syntect spans.
+        assert!(body.contains("syn-"));
+        assert!(body.contains("main"));
     }
 
     #[tokio::test]

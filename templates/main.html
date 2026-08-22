@@ -449,6 +449,9 @@
         a { color: var(--link-color); text-decoration: none; }
         a:hover { text-decoration: underline; }
         img { max-width: 100%; height: auto; }
+
+        /* Syntax highlighting (Syntect), scoped per theme */
+        {{ highlight_css }}
     </style>
 
     {% if mermaid_enabled %}
