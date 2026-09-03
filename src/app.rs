@@ -10,6 +10,7 @@ use axum::{
     Router,
 };
 use futures_util::{SinkExt, StreamExt};
+use markdown::mdast::Node;
 use minijinja::{context, value::Value, Environment};
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
@@ -77,6 +78,7 @@ struct TrackedFile {
     path: PathBuf,
     last_modified: SystemTime,
     html: String,
+    page_title: String,
 }
 
 struct MarkdownState {
@@ -98,6 +100,7 @@ impl MarkdownState {
             let html = Self::markdown_to_html(&content)?;
 
             let filename = file_path.file_name().unwrap().to_string_lossy().to_string();
+            let page_title = page_title(&content, &filename);
 
             tracked_files.insert(
                 filename,
@@ -105,6 +108,7 @@ impl MarkdownState {
                     path: file_path,
                     last_modified,
                     html,
+                    page_title,
                 },
             );
         }
@@ -131,6 +135,7 @@ impl MarkdownState {
         if let Some(tracked) = self.tracked_files.get_mut(filename) {
             let content = fs::read_to_string(&tracked.path)?;
             tracked.html = Self::markdown_to_html(&content)?;
+            tracked.page_title = page_title(&content, filename);
             tracked.last_modified = fs::metadata(&tracked.path)?.modified()?;
         }
         Ok(())
@@ -145,6 +150,7 @@ impl MarkdownState {
 
         let metadata = fs::metadata(&file_path)?;
         let content = fs::read_to_string(&file_path)?;
+        let page_title = page_title(&content, &filename);
 
         self.tracked_files.insert(
             filename,
@@ -152,6 +158,7 @@ impl MarkdownState {
                 path: file_path,
                 last_modified: metadata.modified()?,
                 html: Self::markdown_to_html(&content)?,
+                page_title,
             },
         );
 
@@ -168,6 +175,60 @@ impl MarkdownState {
 
         Ok(html_body)
     }
+}
+
+fn page_title(content: &str, filename: &str) -> String {
+    let mut options = markdown::ParseOptions::gfm();
+    options.constructs.frontmatter = true;
+
+    markdown::to_mdast(content, &options)
+        .ok()
+        .and_then(|root| {
+            root.children()?.iter().find_map(|node| {
+                let Node::Heading(heading) = node else {
+                    return None;
+                };
+
+                if heading.depth != 1 {
+                    return None;
+                }
+
+                let title = plain_text(&heading.children);
+                (!title.is_empty()).then_some(title)
+            })
+        })
+        .unwrap_or_else(|| filename_stem(filename).to_string())
+}
+
+fn plain_text(nodes: &[Node]) -> String {
+    fn collect(nodes: &[Node], output: &mut String) {
+        for node in nodes {
+            match node {
+                Node::Text(text) => output.push_str(&text.value),
+                Node::InlineCode(code) => output.push_str(&code.value),
+                Node::InlineMath(math) => output.push_str(&math.value),
+                Node::Image(image) => output.push_str(&image.alt),
+                Node::ImageReference(image) => output.push_str(&image.alt),
+                Node::Break(_) => output.push(' '),
+                _ => {
+                    if let Some(children) = node.children() {
+                        collect(children, output);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut output = String::new();
+    collect(nodes, &mut output);
+    output.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn filename_stem(filename: &str) -> &str {
+    std::path::Path::new(filename)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(filename)
 }
 
 /// Handles a markdown file that may have been created or modified.
@@ -482,19 +543,18 @@ async fn render_markdown(state: &MarkdownState, current_file: &str) -> (StatusCo
         }
     };
 
-    let (content, has_mermaid) = if let Some(tracked) = state.tracked_files.get(current_file) {
-        let html = &tracked.html;
-        let mermaid = html.contains(r#"class="language-mermaid""#);
-        (Value::from_safe_string(html.clone()), mermaid)
-    } else {
-        return (StatusCode::NOT_FOUND, Html("File not found".to_string()));
-    };
-
-    // Derive page title from filename (stem without extension)
-    let page_title = std::path::Path::new(current_file)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or(current_file);
+    let (content, has_mermaid, page_title) =
+        if let Some(tracked) = state.tracked_files.get(current_file) {
+            let html = &tracked.html;
+            let mermaid = html.contains(r#"class="language-mermaid""#);
+            (
+                Value::from_safe_string(html.clone()),
+                mermaid,
+                tracked.page_title.as_str(),
+            )
+        } else {
+            return (StatusCode::NOT_FOUND, Html("File not found".to_string()));
+        };
 
     let rendered = if state.show_navigation() {
         let filenames = state.get_sorted_filenames();
@@ -840,6 +900,40 @@ mod tests {
         assert_eq!(browsable_host("example.com"), "example.com");
     }
 
+    #[test]
+    fn test_page_title_uses_first_h1() {
+        let content = "## Introduction\n\n# Document title\n\n# Later title";
+
+        assert_eq!(page_title(content, "fallback.md"), "Document title");
+    }
+
+    #[test]
+    fn test_page_title_supports_setext_h1() {
+        let content = "Document title\n==============\n\nContent";
+
+        assert_eq!(page_title(content, "fallback.md"), "Document title");
+    }
+
+    #[test]
+    fn test_page_title_flattens_inline_markdown() {
+        let content = "# **Network** [HLD](https://example.com) `session` ![plan](plan.png)";
+
+        assert_eq!(
+            page_title(content, "fallback.md"),
+            "Network HLD session plan"
+        );
+    }
+
+    #[test]
+    fn test_page_title_falls_back_to_filename_stem() {
+        let content = "## No level-one heading\n\nContent";
+
+        assert_eq!(
+            page_title(content, "2026-08-18-network-hld.md"),
+            "2026-08-18-network-hld"
+        );
+    }
+
     #[tokio::test]
     async fn test_bind_retries_on_addr_in_use() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -961,6 +1055,10 @@ mod tests {
         let body = response.text();
 
         assert!(body.contains("<h1>Hello World</h1>"));
+        assert!(body.contains("<title>Hello World</title>"));
+        assert!(body.contains(r#"<link rel="icon" type="image/svg+xml""#));
+        assert!(body.contains("data:image/svg+xml"));
+        assert!(body.contains("%3EMP%3C/text%3E"));
         assert!(body.contains("<strong>bold</strong>"));
         assert!(body.contains("theme-toggle"));
         assert!(body.contains("openThemeModal"));
@@ -993,6 +1091,39 @@ mod tests {
         .await;
 
         update_result.expect("Timeout waiting for WebSocket update after file modification");
+
+        let response = server.get("/").await;
+        assert_eq!(response.status_code(), 200);
+        assert!(response.text().contains("<title>Modified Content</title>"));
+    }
+
+    #[tokio::test]
+    async fn test_page_title_is_html_escaped() {
+        let (server, _temp_file) = create_test_server("# Fish & Chips <em>Menu</em>").await;
+
+        let response = server.get("/").await;
+
+        assert_eq!(response.status_code(), 200);
+        assert!(response
+            .text()
+            .contains("<title>Fish &amp; Chips Menu</title>"));
+    }
+
+    #[tokio::test]
+    async fn test_server_page_title_falls_back_to_filename_stem() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let markdown_path = temp_dir.path().join("release-notes.md");
+        fs::write(&markdown_path, "## Changes\n\nNo level-one heading")
+            .expect("Failed to write markdown file");
+
+        let router = new_router(temp_dir.path().to_path_buf(), vec![markdown_path], false)
+            .expect("Failed to create router");
+        let server = TestServer::new(router).expect("Failed to create test server");
+
+        let response = server.get("/").await;
+
+        assert_eq!(response.status_code(), 200);
+        assert!(response.text().contains("<title>release-notes</title>"));
     }
 
     #[tokio::test]
@@ -1304,18 +1435,21 @@ classDiagram
         assert_eq!(response1.status_code(), 200);
         let body1 = response1.text();
         assert!(body1.contains("<h1>Test 1</h1>"));
+        assert!(body1.contains("<title>Test 1</title>"));
         assert!(body1.contains("Content of test1"));
 
         let response2 = server.get("/test2.markdown").await;
         assert_eq!(response2.status_code(), 200);
         let body2 = response2.text();
         assert!(body2.contains("<h1>Test 2</h1>"));
+        assert!(body2.contains("<title>Test 2</title>"));
         assert!(body2.contains("Content of test2"));
 
         let response3 = server.get("/test3.md").await;
         assert_eq!(response3.status_code(), 200);
         let body3 = response3.text();
         assert!(body3.contains("<h1>Test 3</h1>"));
+        assert!(body3.contains("<title>Test 3</title>"));
         assert!(body3.contains("Content of test3"));
     }
 
