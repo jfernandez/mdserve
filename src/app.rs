@@ -1056,6 +1056,9 @@ mod tests {
 
         assert!(body.contains("<h1>Hello World</h1>"));
         assert!(body.contains("<title>Hello World</title>"));
+        assert!(body.contains(r#"<link rel="icon" type="image/svg+xml""#));
+        assert!(body.contains("data:image/svg+xml"));
+        assert!(body.contains("%3EMP%3C/text%3E"));
         assert!(body.contains("<strong>bold</strong>"));
         assert!(body.contains("theme-toggle"));
         assert!(body.contains("openThemeModal"));
