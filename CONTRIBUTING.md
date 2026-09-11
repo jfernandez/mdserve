@@ -1,6 +1,8 @@
 # Contributing to mdserve
 
-Thank you for your interest in contributing to mdserve!
+> **mdserve is archived and no longer accepts contributions.** The repository
+> is read-only. If you want to keep developing it, fork it under the MIT
+> license. The guidelines below are kept for reference.
 
 ## Commit Message Format
 
