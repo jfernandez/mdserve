@@ -1,5 +1,19 @@
 # mdserve
 
+> [!IMPORTANT]
+> **This project is archived and no longer maintained** (September 2026).
+>
+> mdserve was built to give humans a live rendered view of the markdown that
+> AI coding agents produce. Two things have changed since. Agent CLIs now ship
+> their own rendering, such as Artifacts in Claude Code, and agents are
+> outgrowing markdown and reaching for HTML when they want to show something.
+> The gap mdserve filled has closed.
+>
+> The code stays available under the MIT license. The v1.1.0 release and the
+> existing packages on crates.io, Homebrew, Arch and nixpkgs will keep working,
+> but there will be no further releases, bug fixes, or security updates.
+> Forks are welcome.
+
 Markdown preview server for AI coding agents.
 
 Follow along as your AI agent writes markdown, rendered live in the browser
